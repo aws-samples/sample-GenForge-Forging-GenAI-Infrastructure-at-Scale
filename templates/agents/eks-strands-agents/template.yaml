@@ -1,0 +1,177 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: genforge-eks-strands-agents-template
+  title: Strands AI Agents on EKS
+  description: |
+    Deploy AI agents using the Strands framework on Amazon EKS:
+    - Weather Agent demo with tool calling using Strands SDK
+    - ECR repository for agent container images
+    - IAM role for EKS pod identity with Bedrock access
+    - Helm chart values and Kubernetes manifests
+    - Bedrock LLM integration for agent reasoning
+  tags:
+    - genforge
+    - generative-ai
+    - aws
+    - eks
+    - strands
+    - agents
+spec:
+  owner: platform-team
+  type: agents
+
+  parameters:
+    - title: Component Information
+      required:
+        - name
+        - owner
+      properties:
+        name:
+          title: Component Name
+          type: string
+          description: Unique name for your Strands agent deployment
+          ui:autofocus: true
+          pattern: '^[a-z0-9-]+$'
+          maxLength: 50
+        description:
+          title: Description
+          type: string
+          description: Brief description of this agent
+        owner:
+          title: Owner
+          type: string
+          description: Team that owns this component
+          ui:field: OwnerPicker
+          ui:options:
+            catalogFilter:
+              kind: Group
+
+    - title: AWS Configuration
+      required:
+        - awsRegion
+        - awsAccountId
+        - environment
+      properties:
+        awsRegion:
+          title: AWS Region
+          type: string
+          description: AWS region for deployment (must support Bedrock)
+          default: us-east-1
+          enum:
+            - us-east-1
+            - us-west-2
+            - eu-west-1
+          enumNames:
+            - US East (N. Virginia)
+            - US West (Oregon)
+            - EU (Ireland)
+        awsAccountId:
+          title: AWS Account
+          type: string
+          description: Target AWS account for deployment
+          ui:field: EntityPicker
+          ui:options:
+            catalogFilter:
+              kind: Resource
+              spec.type: aws-account
+        environment:
+          title: Environment
+          type: string
+          description: Deployment environment
+          default: dev
+          enum:
+            - dev
+            - staging
+            - prod
+          enumNames:
+            - Development
+            - Staging
+            - Production
+
+    - title: EKS Configuration
+      required:
+        - eksClusterName
+      properties:
+        eksClusterName:
+          title: EKS Cluster Name
+          type: string
+          description: Name of the existing EKS cluster to deploy the agent into
+        ecrRepoName:
+          title: ECR Repository Name
+          type: string
+          description: Name for the ECR repository that stores agent container images
+          default: strands-agent
+
+    - title: Agent Configuration
+      properties:
+        bedrockModelId:
+          title: Bedrock Model
+          type: string
+          description: Bedrock foundation model for agent reasoning
+          default: anthropic.claude-3-sonnet-20240229-v1:0
+          enum:
+            - anthropic.claude-3-sonnet-20240229-v1:0
+            - anthropic.claude-3-haiku-20240307-v1:0
+            - amazon.titan-text-express-v1
+          enumNames:
+            - Anthropic Claude 3 Sonnet
+            - Anthropic Claude 3 Haiku
+            - Amazon Titan Text Express v1
+
+    - title: Repository Configuration
+      required:
+        - repoUrl
+      properties:
+        repoUrl:
+          title: Repository Location
+          type: string
+          ui:field: RepoUrlPicker
+          ui:options:
+            allowedHosts:
+              - github.com
+
+  steps:
+    - id: fetch-base
+      name: Fetch Base Template
+      action: fetch:template
+      input:
+        url: ./skeleton
+        values:
+          name: ${{ parameters.name }}
+          description: ${{ parameters.description }}
+          owner: ${{ parameters.owner }}
+          awsRegion: ${{ parameters.awsRegion }}
+          awsAccountId: ${{ parameters.awsAccountId | parseEntityRef | pick('name') }}
+          environment: ${{ parameters.environment }}
+          eksClusterName: ${{ parameters.eksClusterName }}
+          ecrRepoName: ${{ parameters.ecrRepoName }}
+          bedrockModelId: ${{ parameters.bedrockModelId }}
+          repoUrl: ${{ parameters.repoUrl }}
+
+    - id: publish
+      name: Publish to GitHub
+      action: publish:github
+      input:
+        description: 'GenForge - Strands AI Agent on EKS for ${{ parameters.name }}'
+        repoUrl: ${{ parameters.repoUrl }}
+        defaultBranch: main
+        repoVisibility: private
+
+    - id: register
+      name: Register Component
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
+        catalogInfoPath: '/catalog-info.yaml'
+
+  output:
+    links:
+      - title: Repository
+        url: ${{ steps['publish'].output.remoteUrl }}
+      - title: Open in Catalog
+        icon: catalog
+        entityRef: ${{ steps['register'].output.entityRef }}
+      - title: EKS Console
+        icon: cloud
+        url: https://${{ parameters.awsRegion }}.console.aws.amazon.com/eks/home?region=${{ parameters.awsRegion }}#/clusters/${{ parameters.eksClusterName }}

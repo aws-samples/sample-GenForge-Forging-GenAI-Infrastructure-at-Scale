@@ -1,0 +1,42 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: '111111111111'
+  title: AWS Development Account
+  description: AWS account for development workloads
+  tags:
+    - aws
+    - development
+spec:
+  type: aws-account
+  owner: platform-team
+  system: genforge
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: '222222222222'
+  title: AWS Staging Account
+  description: AWS account for staging workloads
+  tags:
+    - aws
+    - staging
+spec:
+  type: aws-account
+  owner: platform-team
+  system: genforge
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: '333333333333'
+  title: AWS Production Account
+  description: AWS account for production workloads
+  tags:
+    - aws
+    - production
+spec:
+  type: aws-account
+  owner: platform-team
+  system: genforge

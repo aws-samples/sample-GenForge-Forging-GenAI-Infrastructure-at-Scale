@@ -1,0 +1,182 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: genforge-vpc-template
+  title: VPC Foundation
+  description: >-
+    Production-grade VPC with public/private/isolated subnets, NAT gateways,
+    and VPC endpoints for GenAI services
+  tags:
+    - genforge
+    - generative-ai
+    - aws
+    - vpc
+    - foundation
+    - networking
+  annotations:
+    backstage.io/techdocs-ref: dir:.
+spec:
+  owner: platform-team
+  type: foundation
+
+  parameters:
+    - title: Component Information
+      required:
+        - name
+        - owner
+      properties:
+        name:
+          title: Component Name
+          type: string
+          description: Unique name for this VPC component (lowercase, numbers, hyphens only)
+          ui:autofocus: true
+          pattern: '^[a-z0-9-]+$'
+          maxLength: 50
+        description:
+          title: Description
+          type: string
+          description: Description of this VPC's purpose
+        owner:
+          title: Owner
+          type: string
+          description: Owner team of the component
+          ui:field: OwnerPicker
+          ui:options:
+            catalogFilter:
+              kind: Group
+
+    - title: AWS Configuration
+      required:
+        - awsRegion
+        - awsAccountId
+        - environment
+      properties:
+        awsRegion:
+          title: AWS Region
+          type: string
+          description: AWS region for deployment
+          default: us-east-1
+          enum:
+            - us-east-1
+            - us-west-2
+            - eu-west-1
+          enumNames:
+            - US East (N. Virginia)
+            - US West (Oregon)
+            - EU (Ireland)
+        awsAccountId:
+          title: AWS Account
+          type: string
+          description: Target AWS account for deployment
+          ui:field: EntityPicker
+          ui:options:
+            catalogFilter:
+              kind: Resource
+              spec.type: aws-account
+        environment:
+          title: Environment
+          type: string
+          description: Deployment environment
+          default: dev
+          enum:
+            - dev
+            - staging
+            - prod
+          enumNames:
+            - Development
+            - Staging
+            - Production
+
+    - title: VPC Configuration
+      required:
+        - vpcCidr
+        - availabilityZones
+      properties:
+        vpcCidr:
+          title: VPC CIDR Block
+          type: string
+          description: CIDR block for the VPC (e.g., 10.0.0.0/16)
+          default: '10.0.0.0/16'
+          pattern: '^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$'
+        availabilityZones:
+          title: Number of Availability Zones
+          type: integer
+          description: Number of AZs for high availability (2 or 3)
+          default: 2
+          enum:
+            - 2
+            - 3
+          enumNames:
+            - '2 AZs'
+            - '3 AZs'
+        enableNatGateway:
+          title: Enable NAT Gateway
+          type: boolean
+          description: Enable NAT Gateway for private subnet internet access
+          default: true
+        singleNatGateway:
+          title: Single NAT Gateway
+          type: boolean
+          description: Use a single NAT Gateway (cost optimization for non-prod environments)
+          default: true
+        enableVpcEndpoints:
+          title: Enable VPC Endpoints
+          type: boolean
+          description: Create VPC endpoints for S3, ECR, SageMaker, Bedrock, and other AWS services
+          default: true
+
+    - title: Repository Configuration
+      required:
+        - repoUrl
+      properties:
+        repoUrl:
+          title: Repository Location
+          type: string
+          ui:field: RepoUrlPicker
+          ui:options:
+            allowedHosts:
+              - github.com
+
+  steps:
+    - id: fetch-base
+      name: Fetch Base Template
+      action: fetch:template
+      input:
+        url: ./skeleton
+        values:
+          name: ${{ parameters.name }}
+          description: ${{ parameters.description }}
+          owner: ${{ parameters.owner }}
+          awsRegion: ${{ parameters.awsRegion }}
+          accountId: ${{ parameters.awsAccountId | parseEntityRef | pick('name') }}
+          environment: ${{ parameters.environment }}
+          vpcCidr: ${{ parameters.vpcCidr }}
+          availabilityZones: ${{ parameters.availabilityZones }}
+          enableNatGateway: ${{ parameters.enableNatGateway }}
+          singleNatGateway: ${{ parameters.singleNatGateway }}
+          enableVpcEndpoints: ${{ parameters.enableVpcEndpoints }}
+          destination: ${{ parameters.repoUrl | parseRepoUrl }}
+
+    - id: publish
+      name: Publish to GitHub
+      action: publish:github
+      input:
+        repoUrl: ${{ parameters.repoUrl }}
+        description: 'GenForge - VPC Foundation Infrastructure for ${{ parameters.name }}'
+        defaultBranch: main
+        repoVisibility: private
+
+    - id: register
+      name: Register in Catalog
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
+        catalogInfoPath: /catalog-info.yaml
+
+  output:
+    links:
+      - title: Repository
+        url: ${{ steps['publish'].output.remoteUrl }}
+      - title: Open in Catalog
+        icon: catalog
+        entityRef: ${{ steps['register'].output.entityRef }}

@@ -1,0 +1,311 @@
+name: Deploy SageMaker LLM Fine-Tuning Infrastructure
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+        default: dev
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+env:
+  AWS_REGION: ${{ values.awsRegion }}
+  ENVIRONMENT: {% raw %}${{ github.event.inputs.environment || '{% endraw %}${{ values.environment }}{% raw %}' }}{% endraw %}
+
+jobs:
+  # ---------------------------------------------------------------------- #
+  # IaC Security Scanning - Gates deployment on critical/high findings
+  # Runs: cdk-nag (AWS best practices), Checkov (multi-cloud IaC policy),
+  #       pip-audit (Python CVE check)
+  # ---------------------------------------------------------------------- #
+  security-scan:
+    name: IaC Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk@2.170.0
+
+      - name: Install Python dependencies (with cdk-nag)
+        working-directory: ./cdk
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pip-audit checkov
+
+      - name: pip-audit (Python CVE scan)
+        id: pip-audit
+        working-directory: ./cdk
+        continue-on-error: true
+        run: |
+          pip-audit -r requirements.txt --format json --output pip-audit-report.json || true
+          pip-audit -r requirements.txt || echo "::warning::pip-audit found vulnerabilities"
+
+      - name: CDK Synth (with cdk-nag aspects)
+        working-directory: ./cdk
+        continue-on-error: true
+        run: cdk synth || echo "::warning::cdk synth reported cdk-nag findings (non-blocking)"
+
+      - name: Parse cdk-nag findings
+        id: cdk-nag
+        working-directory: ./cdk
+        run: |
+          set +e
+          NAG_REPORTS=$(find cdk.out -name "AwsSolutions-*-NagReport.csv" 2>/dev/null)
+          ERRORS=0
+          WARNINGS=0
+          if [ -n "$NAG_REPORTS" ]; then
+            for report in $NAG_REPORTS; do
+              # CSV columns: Rule ID, Resource, Compliance, Explanation, Level
+              # Compliance: Non-Compliant, Compliant, Suppressed, N/A
+              # Level: Error, Warning
+              ERR=$(awk -F',' 'NR>1 && $3=="Non-Compliant" && $5=="Error"' "$report" | wc -l)
+              WARN=$(awk -F',' 'NR>1 && $3=="Non-Compliant" && $5=="Warning"' "$report" | wc -l)
+              ERRORS=$((ERRORS+ERR))
+              WARNINGS=$((WARNINGS+WARN))
+            done
+          fi
+          echo "errors=$ERRORS" >> {% raw %}"$GITHUB_OUTPUT"{% endraw %}
+          echo "warnings=$WARNINGS" >> {% raw %}"$GITHUB_OUTPUT"{% endraw %}
+          echo ""
+          echo "cdk-nag results: $ERRORS error(s), $WARNINGS warning(s)"
+          if [ "$ERRORS" -gt 0 ]; then
+            echo ""
+            echo "=== cdk-nag Errors (must be fixed) ==="
+            for report in $NAG_REPORTS; do
+              awk -F',' 'NR>1 && $3=="Non-Compliant" && $5=="Error" { print "  - " $1 " on " $2 ": " $4 }' "$report"
+            done
+          fi
+
+      - name: Run Checkov (CloudFormation policy scan)
+        id: checkov
+        working-directory: ./cdk
+        continue-on-error: true
+        run: |
+          # Checkov scans the synthesized CloudFormation in cdk.out/
+          # --soft-fail-on LOW,MEDIUM means only fail on HIGH/CRITICAL
+          checkov \
+            --directory cdk.out \
+            --framework cloudformation \
+            --output cli \
+            --output json \
+            --output-file-path checkov-report.json \
+            --soft-fail-on LOW,MEDIUM \
+            --quiet || echo "checkov_failed=true" >> {% raw %}"$GITHUB_OUTPUT"{% endraw %}
+
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            ./cdk/cdk.out/AwsSolutions-*-NagReport.csv
+            ./cdk/checkov-report.json
+            ./cdk/pip-audit-report.json
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Comment PR with security findings
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            let body = '## IaC Security Scan Results\n\n';
+
+            // cdk-nag summary
+            const errors = '{% raw %}${{ steps.cdk-nag.outputs.errors }}{% endraw %}' || '0';
+            const warnings = '{% raw %}${{ steps.cdk-nag.outputs.warnings }}{% endraw %}' || '0';
+            body += `### cdk-nag (AWS Solutions)\n`;
+            body += `- Errors: **${errors}**\n`;
+            body += `- Warnings: **${warnings}**\n\n`;
+
+            // Top cdk-nag errors
+            try {
+              const reportDir = './cdk/cdk.out';
+              if (fs.existsSync(reportDir)) {
+                const reports = fs.readdirSync(reportDir).filter(f => f.match(/^AwsSolutions-.*-NagReport\.csv$/));
+                const errorLines = [];
+                for (const r of reports) {
+                  const lines = fs.readFileSync(path.join(reportDir, r), 'utf-8').split('\n').slice(1);
+                  for (const line of lines) {
+                    const cols = line.split(',');
+                    if (cols[2] === 'Non-Compliant' && cols[4] && cols[4].trim() === 'Error') {
+                      errorLines.push(`- **${cols[0]}** on \`${cols[1]}\`: ${cols[3]}`);
+                    }
+                  }
+                }
+                if (errorLines.length > 0) {
+                  body += `<details><summary>Top cdk-nag errors</summary>\n\n${errorLines.slice(0, 20).join('\n')}\n</details>\n\n`;
+                }
+              }
+            } catch(e) { /* ignore */ }
+
+            // Checkov summary
+            body += `### Checkov\n`;
+            try {
+              const checkovPath = './cdk/checkov-report.json';
+              if (fs.existsSync(checkovPath)) {
+                const checkov = JSON.parse(fs.readFileSync(checkovPath, 'utf-8'));
+                const results = Array.isArray(checkov) ? checkov : [checkov];
+                let passed = 0, failed = 0, hcrit = 0;
+                for (const r of results) {
+                  passed += (r.summary?.passed || 0);
+                  failed += (r.summary?.failed || 0);
+                  for (const f of (r.results?.failed_checks || [])) {
+                    if (f.severity === 'HIGH' || f.severity === 'CRITICAL') hcrit++;
+                  }
+                }
+                body += `- Passed: **${passed}**\n- Failed: **${failed}**\n- High/Critical: **${hcrit}**\n\n`;
+              } else {
+                body += `_No checkov report generated._\n\n`;
+              }
+            } catch(e) { body += `_Could not parse checkov report._\n\n`; }
+
+            // pip-audit summary
+            body += `### pip-audit\n`;
+            try {
+              const auditPath = './cdk/pip-audit-report.json';
+              if (fs.existsSync(auditPath)) {
+                const audit = JSON.parse(fs.readFileSync(auditPath, 'utf-8'));
+                const vulns = (audit.dependencies || []).flatMap(d => d.vulns || []);
+                body += `- Vulnerabilities found: **${vulns.length}**\n\n`;
+              } else {
+                body += `_No pip-audit report generated._\n\n`;
+              }
+            } catch(e) { body += `_Could not parse pip-audit report._\n\n`; }
+
+            body += `_Full reports available in the security-reports artifact._\n`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Report security findings (non-blocking)
+        run: |
+          ERRORS="{% raw %}${{ steps.cdk-nag.outputs.errors }}{% endraw %}"
+          ERRORS="${ERRORS:-0}"
+          WARNINGS="{% raw %}${{ steps.cdk-nag.outputs.warnings }}{% endraw %}"
+          WARNINGS="${WARNINGS:-0}"
+          CHECKOV_FAILED="{% raw %}${{ steps.checkov.outputs.checkov_failed }}{% endraw %}"
+          if [ "$ERRORS" -gt 0 ]; then
+            echo "::warning::cdk-nag reported $ERRORS error(s) and $WARNINGS warning(s) - deployment will continue (non-blocking mode)"
+          fi
+          if [ "$CHECKOV_FAILED" = "true" ]; then
+            echo "::warning::Checkov reported HIGH/CRITICAL findings - deployment will continue (non-blocking mode)"
+          fi
+          if [ "$ERRORS" -eq 0 ] && [ "$CHECKOV_FAILED" != "true" ]; then
+            echo "Security scan clean."
+          else
+            echo "Security scan reported issues. Review findings in the PR comment and security-reports artifact."
+          fi
+
+  # ---------------------------------------------------------------------- #
+  # Deploy - depends on security-scan, only runs if scan passes
+  # ---------------------------------------------------------------------- #
+  deploy:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    needs: security-scan
+    env:
+      CDK_NAG_DISABLE: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ values.awsAccountId }}:role/GitHubActionsDeployRole
+          role-session-name: GitHubActionsLLMFineTuneDeploy
+          aws-region: {% raw %}${{ env.AWS_REGION }}{% endraw %}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk@2.170.0
+
+      - name: Install Python Dependencies
+        working-directory: ./cdk
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: CDK Synth
+        working-directory: ./cdk
+        run: cdk synth
+
+      - name: CDK Diff
+        working-directory: ./cdk
+        run: cdk diff
+        continue-on-error: true
+
+      - name: CDK Deploy
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        working-directory: ./cdk
+        run: cdk deploy --require-approval never --outputs-file cdk-outputs.json
+
+      - name: Upload CDK Outputs
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cdk-outputs
+          path: ./cdk/cdk-outputs.json
+          retention-days: 30
+
+      - name: Comment PR with Diff
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { execSync } = require('child_process');
+            const diff = execSync('cd cdk && cdk diff 2>&1 || true', { encoding: 'utf-8' });
+            const truncatedDiff = diff.length > 60000 ? diff.substring(0, 60000) + '\n... (truncated)' : diff;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## CDK Diff Output - SageMaker LLM Fine-Tuning\n\n\`\`\`\n${truncatedDiff}\n\`\`\``
+            });

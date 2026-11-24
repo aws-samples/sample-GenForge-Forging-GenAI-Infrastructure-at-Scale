@@ -1,0 +1,71 @@
+name: Destroy Strands Agent Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "destroy" to confirm infrastructure destruction'
+        required: true
+        type: string
+      environment:
+        description: 'Environment to destroy'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+        default: dev
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ values.awsRegion }}
+  ENVIRONMENT: {% raw %}${{ github.event.inputs.environment }}{% endraw %}
+
+jobs:
+  destroy:
+    name: Destroy Infrastructure
+    runs-on: ubuntu-latest
+    if: {% raw %}${{ github.event.inputs.confirm == 'destroy' }}{% endraw %}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ values.awsAccountId }}:role/GitHubActionsDeployRole
+          role-session-name: GitHubActionsStrandsAgentDestroy
+          aws-region: {% raw %}${{ env.AWS_REGION }}{% endraw %}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk@2.170.0
+
+      - name: Install Python Dependencies
+        working-directory: ./cdk
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: CDK Destroy
+        working-directory: ./cdk
+        run: cdk destroy --force
+
+      - name: Cleanup Confirmation
+        run: |
+          echo "Strands Agent infrastructure has been destroyed."
+          echo "Note: ECR images may need manual cleanup if the repository had RETAIN policy."
+          echo "Note: EKS workloads (Deployments, Services) must be removed separately via kubectl/helm."

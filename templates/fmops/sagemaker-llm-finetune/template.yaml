@@ -1,0 +1,246 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: genforge-sagemaker-llm-finetune-template
+  title: SageMaker LLM Fine-Tuning
+  description: |
+    Fine-tune LLMs with LoRA on SageMaker with distributed training support:
+    - S3 buckets for training data and model artifacts (SSE-KMS)
+    - IAM roles for SageMaker Training and Step Functions
+    - Lambda function to start SageMaker Training Job with LoRA config
+    - Lambda function to poll training job status
+    - Step Functions state machine for orchestration
+    - CloudWatch log groups for monitoring
+  tags:
+    - genforge
+    - generative-ai
+    - aws
+    - sagemaker
+    - fine-tuning
+    - lora
+    - fmops
+spec:
+  owner: platform-team
+  type: fmops
+
+  parameters:
+    - title: Component Information
+      required:
+        - name
+        - owner
+      properties:
+        name:
+          title: Component Name
+          type: string
+          description: Unique name for your fine-tuning pipeline
+          ui:autofocus: true
+          pattern: '^[a-z0-9-]+$'
+          maxLength: 50
+        description:
+          title: Description
+          type: string
+          description: Brief description of this fine-tuning pipeline
+        owner:
+          title: Owner
+          type: string
+          description: Team that owns this component
+          ui:field: OwnerPicker
+          ui:options:
+            catalogFilter:
+              kind: Group
+
+    - title: AWS Configuration
+      required:
+        - awsRegion
+        - awsAccountId
+        - environment
+      properties:
+        awsRegion:
+          title: AWS Region
+          type: string
+          description: AWS region for deployment
+          default: us-east-1
+          enum:
+            - us-east-1
+            - us-west-2
+            - eu-west-1
+          enumNames:
+            - US East (N. Virginia)
+            - US West (Oregon)
+            - EU (Ireland)
+        awsAccountId:
+          title: AWS Account
+          type: string
+          description: Target AWS account for deployment
+          ui:field: EntityPicker
+          ui:options:
+            catalogFilter:
+              kind: Resource
+              spec.type: aws-account
+        environment:
+          title: Environment
+          type: string
+          description: Deployment environment
+          default: dev
+          enum:
+            - dev
+            - staging
+            - prod
+          enumNames:
+            - Development
+            - Staging
+            - Production
+
+    - title: Model Configuration
+      required:
+        - baseModel
+      properties:
+        baseModel:
+          title: Base Model
+          type: string
+          description: HuggingFace model to fine-tune
+          default: meta-llama/Llama-2-7b-hf
+          enum:
+            - codellama/CodeLlama-7b-hf
+            - meta-llama/Llama-2-7b-hf
+            - meta-llama/Llama-2-13b-hf
+            - mistralai/Mistral-7B-v0.1
+            - tiiuae/falcon-7b
+          enumNames:
+            - CodeLlama 7B
+            - Llama 2 7B
+            - Llama 2 13B
+            - Mistral 7B v0.1
+            - Falcon 7B
+
+    - title: Training Configuration
+      required:
+        - instanceType
+      properties:
+        instanceType:
+          title: Instance Type
+          type: string
+          description: Training instance type (GPU required)
+          default: ml.g5.2xlarge
+          enum:
+            - ml.g5.xlarge
+            - ml.g5.2xlarge
+            - ml.g5.4xlarge
+            - ml.g5.12xlarge
+            - ml.p4d.24xlarge
+          enumNames:
+            - ml.g5.xlarge (1x A10G GPU, 24GB)
+            - ml.g5.2xlarge (1x A10G GPU, 24GB)
+            - ml.g5.4xlarge (1x A10G GPU, 24GB)
+            - ml.g5.12xlarge (4x A10G GPU, 96GB)
+            - ml.p4d.24xlarge (8x A100 GPU, 320GB)
+        instanceCount:
+          title: Instance Count
+          type: integer
+          description: Number of training instances (for distributed training)
+          default: 1
+          minimum: 1
+          maximum: 8
+        epochs:
+          title: Training Epochs
+          type: integer
+          description: Number of training epochs (1-20)
+          default: 3
+          minimum: 1
+          maximum: 20
+        loraRank:
+          title: LoRA Rank
+          type: integer
+          description: LoRA adapter rank (higher = more parameters, better quality, slower)
+          default: 16
+          enum:
+            - 8
+            - 16
+            - 32
+            - 64
+          enumNames:
+            - '8 (Lightweight)'
+            - '16 (Balanced)'
+            - '32 (Higher quality)'
+            - '64 (Maximum quality)'
+        learningRate:
+          title: Learning Rate
+          type: number
+          description: Learning rate for LoRA fine-tuning
+          default: 0.0002
+
+    - title: Data Configuration
+      properties:
+        trainingDataS3Path:
+          title: Training Data S3 Path
+          type: string
+          description: S3 path to training data (will be created if empty, upload data after deployment)
+        validationSplit:
+          title: Validation Split
+          type: number
+          description: Fraction of data reserved for validation (0-0.5)
+          default: 0.1
+          minimum: 0
+          maximum: 0.5
+
+    - title: Repository Configuration
+      required:
+        - repoUrl
+      properties:
+        repoUrl:
+          title: Repository Location
+          type: string
+          ui:field: RepoUrlPicker
+          ui:options:
+            allowedHosts:
+              - github.com
+
+  steps:
+    - id: fetch-base
+      name: Fetch Base Template
+      action: fetch:template
+      input:
+        url: ./skeleton
+        values:
+          name: ${{ parameters.name }}
+          description: ${{ parameters.description }}
+          owner: ${{ parameters.owner }}
+          awsRegion: ${{ parameters.awsRegion }}
+          awsAccountId: ${{ parameters.awsAccountId | parseEntityRef | pick('name') }}
+          environment: ${{ parameters.environment }}
+          baseModel: ${{ parameters.baseModel }}
+          instanceType: ${{ parameters.instanceType }}
+          instanceCount: ${{ parameters.instanceCount }}
+          epochs: ${{ parameters.epochs }}
+          loraRank: ${{ parameters.loraRank }}
+          learningRate: ${{ parameters.learningRate }}
+          trainingDataS3Path: ${{ parameters.trainingDataS3Path }}
+          validationSplit: ${{ parameters.validationSplit }}
+          repoUrl: ${{ parameters.repoUrl }}
+
+    - id: publish
+      name: Publish to GitHub
+      action: publish:github
+      input:
+        description: 'GenForge - SageMaker LLM Fine-Tuning for ${{ parameters.name }}'
+        repoUrl: ${{ parameters.repoUrl }}
+        defaultBranch: main
+        repoVisibility: private
+
+    - id: register
+      name: Register Component
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
+        catalogInfoPath: '/catalog-info.yaml'
+
+  output:
+    links:
+      - title: Repository
+        url: ${{ steps['publish'].output.remoteUrl }}
+      - title: Open in Catalog
+        icon: catalog
+        entityRef: ${{ steps['register'].output.entityRef }}
+      - title: SageMaker Console
+        icon: cloud
+        url: https://${{ parameters.awsRegion }}.console.aws.amazon.com/sagemaker/home?region=${{ parameters.awsRegion }}#/jobs

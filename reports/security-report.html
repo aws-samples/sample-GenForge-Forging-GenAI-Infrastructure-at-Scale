@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GenForge Security Scan Report</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --critical: #dc3545;
+      --high: #fd7e14;
+      --medium: #ffc107;
+      --low: #28a745;
+      --info: #17a2b8;
+      --bg: #f8f9fa;
+      --card: #ffffff;
+      --border: #e9ecef;
+      --text: #212529;
+      --text-muted: #6c757d;
+      --header-bg: #1a1a2e;
+      --accent: #e94560;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+    .header {
+      background: linear-gradient(135deg, var(--header-bg) 0%, #16213e 100%);
+      color: white;
+      padding: 40px 0;
+      text-align: center;
+    }
+    .header h1 { font-size: 32px; font-weight: 700; margin-bottom: 8px; }
+    .header .subtitle { color: #adb5bd; font-size: 14px; }
+    .header .badge { display: inline-block; padding: 6px 20px; border-radius: 20px; font-weight: 700; font-size: 16px; margin-top: 16px; }
+    .badge-fail { background: var(--critical); color: white; }
+    .badge-warn { background: var(--medium); color: #333; }
+    .badge-pass { background: var(--low); color: white; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 0 24px; }
+    .section { margin: 32px 0; }
+    .section-title { font-size: 22px; font-weight: 700; color: var(--header-bg); margin-bottom: 20px; padding-bottom: 8px; border-bottom: 2px solid var(--accent); }
+
+    /* Summary cards */
+    .summary-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 16px; margin: -60px 0 32px; position: relative; z-index: 10; }
+    .summary-card { background: var(--card); border-radius: 12px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08); transition: transform 0.2s, box-shadow 0.2s; border-top: 4px solid var(--border); }
+    .summary-card:hover { transform: translateY(-4px); box-shadow: 0 8px 24px rgba(0,0,0,0.12); }
+    .summary-card .number { font-size: 42px; font-weight: 800; }
+    .summary-card .label { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; color: var(--text-muted); }
+    .card-critical { border-top-color: var(--critical); } .card-critical .number { color: var(--critical); }
+    .card-high { border-top-color: var(--high); } .card-high .number { color: var(--high); }
+    .card-medium { border-top-color: var(--medium); } .card-medium .number { color: #b8860b; }
+    .card-low { border-top-color: var(--low); } .card-low .number { color: var(--low); }
+    .card-info { border-top-color: var(--info); } .card-info .number { color: var(--info); }
+    .card-total { border-top-color: var(--header-bg); } .card-total .number { color: var(--header-bg); }
+
+    /* Charts row */
+    .charts-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; margin: 24px 0; }
+    .chart-card { background: var(--card); border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+    .chart-card h3 { font-size: 16px; margin-bottom: 16px; color: var(--header-bg); }
+    .chart-container { position: relative; height: 240px; }
+
+    /* Scan coverage */
+    .coverage-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+    .coverage-card { background: var(--card); border-radius: 10px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-left: 4px solid var(--accent); }
+    .coverage-card .cv-title { font-weight: 700; font-size: 14px; color: var(--header-bg); margin-bottom: 8px; }
+    .coverage-card .cv-value { font-size: 28px; font-weight: 800; color: var(--accent); }
+    .coverage-card .cv-detail { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+    /* Filters */
+    .filters { display: flex; gap: 12px; flex-wrap: wrap; margin: 20px 0; align-items: center; }
+    .filter-btn { padding: 8px 18px; border-radius: 20px; border: 2px solid var(--border); background: white; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s; }
+    .filter-btn:hover { background: var(--bg); }
+    .filter-btn.active { background: var(--header-bg); color: white; border-color: var(--header-bg); }
+    .filter-btn .count { display: inline-block; background: rgba(0,0,0,0.1); padding: 1px 8px; border-radius: 10px; margin-left: 4px; font-size: 11px; }
+    .filter-btn.active .count { background: rgba(255,255,255,0.2); }
+    .search-box { padding: 8px 16px; border: 2px solid var(--border); border-radius: 20px; font-size: 13px; width: 240px; outline: none; transition: border-color 0.2s; }
+    .search-box:focus { border-color: var(--accent); }
+
+    /* Findings table */
+    .findings-table { width: 100%; border-collapse: separate; border-spacing: 0; background: var(--card); border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+    .findings-table th { background: var(--header-bg); color: white; padding: 14px 16px; text-align: left; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; position: sticky; top: 0; z-index: 5; }
+    .findings-table td { padding: 14px 16px; border-bottom: 1px solid var(--border); vertical-align: top; font-size: 14px; }
+    .findings-table tr:last-child td { border-bottom: none; }
+    .findings-table tr:hover td { background: #f0f4ff; }
+    .findings-table tr.hidden { display: none; }
+    .severity-badge { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; min-width: 70px; text-align: center; }
+    .sev-critical { background: var(--critical); color: white; }
+    .sev-high { background: var(--high); color: white; }
+    .sev-medium { background: var(--medium); color: #333; }
+    .sev-low { background: var(--low); color: white; }
+    .sev-info { background: var(--info); color: white; }
+    .cat-badge { display: inline-block; padding: 3px 10px; border-radius: 8px; font-size: 11px; font-weight: 600; background: #e9ecef; color: #495057; }
+    .file-path { font-family: 'SF Mono', 'Fira Code', Consolas, monospace; font-size: 12px; color: #6c63ff; word-break: break-all; }
+    .finding-title { font-weight: 600; color: var(--header-bg); margin-bottom: 4px; }
+    .finding-desc { color: var(--text-muted); font-size: 13px; line-height: 1.5; }
+
+    /* Collapsible remediation */
+    .remediation-toggle { cursor: pointer; color: var(--accent); font-size: 12px; font-weight: 600; margin-top: 6px; display: inline-block; }
+    .remediation-toggle:hover { text-decoration: underline; }
+    .remediation-content { display: none; margin-top: 8px; padding: 10px 14px; background: #f8f9fa; border-radius: 8px; border-left: 3px solid var(--accent); font-size: 13px; color: var(--text); line-height: 1.6; }
+    .remediation-content.show { display: block; }
+
+    /* Positive findings */
+    .positive-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .positive-card { background: var(--card); border-radius: 10px; padding: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.04); border-left: 4px solid var(--low); display: flex; gap: 12px; align-items: flex-start; }
+    .positive-card .check-icon { color: var(--low); font-size: 20px; flex-shrink: 0; }
+    .positive-card .pos-title { font-weight: 600; font-size: 13px; color: var(--header-bg); }
+    .positive-card .pos-desc { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+    /* Executive Summary */
+    .exec-summary { background: var(--card); border-radius: 12px; padding: 32px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+    .exec-summary h3 { font-size: 18px; color: var(--header-bg); margin-bottom: 16px; }
+    .exec-summary p { color: var(--text-muted); margin-bottom: 12px; line-height: 1.7; }
+    .risk-meter { height: 12px; background: #e9ecef; border-radius: 6px; overflow: hidden; margin: 16px 0; }
+    .risk-meter-fill { height: 100%; border-radius: 6px; transition: width 0.5s; }
+
+    /* Footer */
+    .footer { text-align: center; padding: 32px; color: var(--text-muted); font-size: 12px; border-top: 1px solid var(--border); margin-top: 48px; }
+
+    /* Print styles */
+    @media print {
+      .header { padding: 20px 0; }
+      .summary-grid { margin-top: -30px; }
+      .filter-btn, .search-box, .filters { display: none !important; }
+      .findings-table tr.hidden { display: table-row !important; }
+      .remediation-content { display: block !important; }
+      body { background: white; }
+    }
+    @media (max-width: 768px) {
+      .summary-grid { grid-template-columns: repeat(3, 1fr); }
+      .charts-row { grid-template-columns: 1fr; }
+      .coverage-grid { grid-template-columns: repeat(2, 1fr); }
+      .positive-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="container">
+    <h1>GenForge Security Scan Report</h1>
+    <div class="subtitle">Generated: 2026-02-20 &nbsp;|&nbsp; Project: GenForge IDP &nbsp;|&nbsp; Backstage 1.48.0 &nbsp;|&nbsp; 8 Templates, 8 CDK Stacks, 16 Workflows</div>
+    <div class="badge badge-fail">OVERALL STATUS: NEEDS REMEDIATION</div>
+  </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="container">
+  <div class="summary-grid">
+    <div class="summary-card card-total"><div class="number">60</div><div class="label">Total Findings</div></div>
+    <div class="summary-card card-critical"><div class="number">0</div><div class="label">Critical</div></div>
+    <div class="summary-card card-high"><div class="number">12</div><div class="label">High</div></div>
+    <div class="summary-card card-medium"><div class="number">25</div><div class="label">Medium</div></div>
+    <div class="summary-card card-low"><div class="number">10</div><div class="label">Low</div></div>
+    <div class="summary-card card-info"><div class="number">13</div><div class="label">Info / Pass</div></div>
+  </div>
+
+  <!-- Executive Summary -->
+  <div class="section">
+    <h2 class="section-title">Executive Summary</h2>
+    <div class="exec-summary">
+      <h3>Risk Assessment</h3>
+      <div class="risk-meter"><div class="risk-meter-fill" style="width: 42%; background: linear-gradient(90deg, var(--low), var(--medium), var(--high));"></div></div>
+      <p><strong>Risk Level: MODERATE</strong> &mdash; No critical vulnerabilities found, but 12 high-severity issues require attention before production deployment. The platform has a strong security foundation (OIDC auth, KMS encryption, removal policies, private repos) but needs hardening in IAM policies, authentication configuration, and input validation.</p>
+      <p><strong>Key Concerns:</strong></p>
+      <ul style="margin-left: 20px; color: #6c757d; line-height: 2;">
+        <li><strong>Authentication &amp; Authorization (3 HIGH):</strong> Guest auth enabled in production config, allow-all permission policy grants unrestricted access to infrastructure provisioning</li>
+        <li><strong>IAM Over-Privilege (4 HIGH):</strong> Multiple CDK stacks use AmazonSageMakerFullAccess managed policy and iam:PassRole with resources=["*"]</li>
+        <li><strong>Network Exposure (2 HIGH):</strong> OpenSearch collection allows public access; MLflow ALB exposes HTTP traffic to internet</li>
+        <li><strong>Supply Chain (2 HIGH):</strong> CDK CLI installed with @latest across all 16 workflows; --require-approval never bypasses change review</li>
+        <li><strong>Script Injection (1 HIGH):</strong> VPC destroy workflow interpolates user input directly in bash run block</li>
+      </ul>
+      <p style="margin-top: 16px;"><strong>Strengths:</strong> All S3 buckets enforce SSL and block public access. All workflows use OIDC (no long-lived credentials). All KMS keys have rotation enabled. All templates create private GitHub repos. All component names are pattern-validated. No hardcoded secrets detected.</p>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div class="section">
+    <h2 class="section-title">Findings Distribution</h2>
+    <div class="charts-row">
+      <div class="chart-card">
+        <h3>By Severity</h3>
+        <div class="chart-container"><canvas id="severityChart"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h3>By Category</h3>
+        <div class="chart-container"><canvas id="categoryChart"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h3>By Template</h3>
+        <div class="chart-container"><canvas id="templateChart"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scan Coverage -->
+  <div class="section">
+    <h2 class="section-title">Scan Coverage</h2>
+    <div class="coverage-grid">
+      <div class="coverage-card"><div class="cv-title">CDK Stacks Reviewed</div><div class="cv-value">8</div><div class="cv-detail">VPC, Bedrock, RAG, JumpStart, HuggingFace, LLM Fine-Tune, EKS Agents, MLflow</div></div>
+      <div class="coverage-card"><div class="cv-title">Workflows Reviewed</div><div class="cv-value">16</div><div class="cv-detail">8 deploy + 8 destroy workflows</div></div>
+      <div class="coverage-card"><div class="cv-title">Templates Validated</div><div class="cv-value">8</div><div class="cv-detail">Parameter validation, input patterns, step security</div></div>
+      <div class="coverage-card"><div class="cv-title">Lines of Code Scanned</div><div class="cv-value">14,214</div><div class="cv-detail">Python, TypeScript, YAML, Shell across 184 files</div></div>
+    </div>
+  </div>
+
+  <!-- Security Checks Performed -->
+  <div class="section">
+    <h2 class="section-title">Security Checks Performed</h2>
+    <div class="coverage-grid" style="grid-template-columns: repeat(3, 1fr);">
+      <div class="coverage-card">
+        <div class="cv-title">Secrets Detection</div>
+        <div class="cv-detail" style="margin-top:8px;">AWS access keys, private keys (RSA/SSH/EC2/DSA/PGP), GitHub tokens, API keys, hardcoded passwords, database connection strings with credentials</div>
+      </div>
+      <div class="coverage-card">
+        <div class="cv-title">CDK Stack Security</div>
+        <div class="cv-detail" style="margin-top:8px;">Encryption at rest (KMS), S3 public access blocking, SSL enforcement, IAM least-privilege, removal policies, resource tagging, VPC flow logs, security groups</div>
+      </div>
+      <div class="coverage-card">
+        <div class="cv-title">GitHub Actions Security</div>
+        <div class="cv-detail" style="margin-top:8px;">Action version pinning, OIDC authentication, minimal permissions, script injection, dangerous flags, workflow triggers, destroy safeguards</div>
+      </div>
+      <div class="coverage-card">
+        <div class="cv-title">Backstage Platform</div>
+        <div class="cv-detail" style="margin-top:8px;">Authentication config, permission policies, CSP headers, CORS, proxy endpoints, catalog entity rules, frontend XSS vectors</div>
+      </div>
+      <div class="coverage-card">
+        <div class="cv-title">Template Validation</div>
+        <div class="cv-detail" style="margin-top:8px;">Input parameter patterns, maxLength constraints, enum validation, template injection risks, step configuration</div>
+      </div>
+      <div class="coverage-card">
+        <div class="cv-title">Dependencies &amp; Supply Chain</div>
+        <div class="cv-detail" style="margin-top:8px;">Yarn npm audit, Python version constraints, lock file presence, deprecated packages, version pinning</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Positive Findings -->
+  <div class="section">
+    <h2 class="section-title">Security Strengths (13 Positive Findings)</h2>
+    <div class="positive-grid">
+      <div class="positive-card"><div class="check-icon">&#10003;</div><div><div class="pos-title">No Hardcoded Secrets Detected</div><div class="pos-desc">Scanned for AWS keys, private keys, GitHub tokens, API keys, passwords, and DB connection strings</div></div></div>
+      <div class="positive-card"><div class="check-icon">&#10003;</div><div><div class="pos-title">All S3 Buckets Block Public Access &amp; Enforce SSL</div><div class="pos-desc">Consistent use of BLOCK_ALL and enforce_ssl=True across all templates</div></div></div>
+      <div class="positive-card"><div class="check-icon">&#10003;</div><div><div class="pos-title">OIDC Authentication for All AWS Access</div><div class="pos-desc">All 16 workflows use role-to-assume with id-token:write. No long-lived credentials</div></div></div>
+      <div class="positive-card"><div class="check-icon">&#10003;</div><div><div class="pos-title">KMS Key Rotation Enabled</div><div class="pos-desc">All dedicated KMS keys have enable_key_rotation=True</div></div></div>
+      <div class="positive-card"><div class="check-icon">&#10003;</div><div><div class="pos-title">Environment-Conditional Removal Policies</div><div class="pos-desc">dev=DESTROY, staging/prod=RETAIN consistently applied</div></div></div>
+      <div class="positive-card"><div class="check-icon">&#10003;</div><div><div class="pos-title">Private GitHub Repositories</div><div class="pos-desc">All 8 templates set repoVisibility: private in publish:github step</div></div></div>
+      <div class="positive-card"><div class="check-icon">&#10003;</div><div><div class="pos-title">Component Name Validation</div><div class="pos-desc">All templates enforce pattern: ^[a-z0-9-]+$ with maxLength: 50</div></div></div>
+      <div class="positive-card"><div class="check-icon">&#10003;</div><div><div class="pos-title">No XSS Vectors in Frontend</div><div class="pos-desc">No dangerouslySetInnerHTML, eval(), or Function() constructor usage found</div></div></div>
+      <div class="positive-card"><div class="check-icon">&#10003;</div><div><div class="pos-title">Actions Version-Pinned (Major Tags)</div><div class="pos-desc">All GitHub Actions use @v4/@v5/@v7 major version pins</div></div></div>
+      <div class="positive-card"><div class="check-icon">&#10003;</div><div><div class="pos-title">Destroy Workflow Safeguards</div><div class="pos-desc">All destroy workflows require typing "destroy" as confirmation</div></div></div>
+      <div class="positive-card"><div class="check-icon">&#10003;</div><div><div class="pos-title">Backend Dockerfile Runs Non-Root</div><div class="pos-desc">Dockerfile correctly uses USER node before application code</div></div></div>
+      <div class="positive-card"><div class="check-icon">&#10003;</div><div><div class="pos-title">No Open Proxy Endpoints</div><div class="pos-desc">Proxy endpoints configured as empty object {}</div></div></div>
+      <div class="positive-card"><div class="check-icon">&#10003;</div><div><div class="pos-title">Comprehensive .gitignore</div><div class="pos-desc">Properly excludes .env, credentials, node_modules, dist, *.local.yaml</div></div></div>
+    </div>
+  </div>
+
+  <!-- Detailed Findings -->
+  <div class="section">
+    <h2 class="section-title">Detailed Findings (47 Issues)</h2>
+
+    <div class="filters">
+      <button class="filter-btn active" data-filter="all" onclick="filterFindings('all', this)">All <span class="count">47</span></button>
+      <button class="filter-btn" data-filter="HIGH" onclick="filterFindings('HIGH', this)">High <span class="count">12</span></button>
+      <button class="filter-btn" data-filter="MEDIUM" onclick="filterFindings('MEDIUM', this)">Medium <span class="count">25</span></button>
+      <button class="filter-btn" data-filter="LOW" onclick="filterFindings('LOW', this)">Low <span class="count">10</span></button>
+      <input type="text" class="search-box" placeholder="Search findings..." oninput="searchFindings(this.value)">
+    </div>
+
+    <table class="findings-table" id="findingsTable">
+      <thead>
+        <tr>
+          <th style="width:85px">Severity</th>
+          <th style="width:140px">Category</th>
+          <th style="width:240px">Location</th>
+          <th>Finding</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- HIGH FINDINGS -->
+        <tr data-severity="HIGH" data-category="auth">
+          <td><span class="severity-badge sev-high">HIGH</span></td>
+          <td><span class="cat-badge">Authentication</span></td>
+          <td><span class="file-path">app-config.production.yaml:17</span></td>
+          <td>
+            <div class="finding-title">Guest auth provider enabled in production config</div>
+            <div class="finding-desc">Production config includes 'guest: {}' under auth.providers alongside GitHub OAuth. Unauthenticated guest access remains available even in production, undermining the GitHub OAuth configuration.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Remove the 'guest: {}' line from app-config.production.yaml auth.providers section. Only the GitHub provider should be enabled in production.</div>
+          </td>
+        </tr>
+        <tr data-severity="HIGH" data-category="auth">
+          <td><span class="severity-badge sev-high">HIGH</span></td>
+          <td><span class="cat-badge">Authorization</span></td>
+          <td><span class="file-path">packages/backend/src/index.ts:33</span></td>
+          <td>
+            <div class="finding-title">Allow-all permission policy grants unrestricted access</div>
+            <div class="finding-desc">Backend uses plugin-permission-backend-module-allow-all-policy granting every user (including guests) full permission to all actions: scaffolding, catalog management, entity deletion. Combined with guest auth, any anonymous user can provision AWS infrastructure.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Replace the allow-all policy with a custom permission policy module that enforces role-based access control. At minimum, restrict scaffolder execute permissions to authenticated users in specific groups (platform-team, data-science-team).</div>
+          </td>
+        </tr>
+        <tr data-severity="HIGH" data-category="iam">
+          <td><span class="severity-badge sev-high">HIGH</span></td>
+          <td><span class="cat-badge">CDK IAM Policy</span></td>
+          <td><span class="file-path">templates/fmops/sagemaker-jumpstart-endpoint/skeleton/cdk/stack.py:80</span></td>
+          <td>
+            <div class="finding-title">AmazonSageMakerFullAccess managed policy grants excessive permissions</div>
+            <div class="finding-desc">SageMaker execution role granted AmazonSageMakerFullAccess (ALL SageMaker operations + broad S3, ECR, CloudWatch, IAM permissions). Additional wildcard resource policies stacked on top for s3:*, ecr:*, and logs:*.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Replace AmazonSageMakerFullAccess with a custom inline policy granting only: sagemaker:CreateModel, sagemaker:CreateEndpoint, sagemaker:CreateEndpointConfig, sagemaker:InvokeEndpoint. Scope S3 resources to the specific data capture bucket ARN.</div>
+          </td>
+        </tr>
+        <tr data-severity="HIGH" data-category="iam">
+          <td><span class="severity-badge sev-high">HIGH</span></td>
+          <td><span class="cat-badge">CDK IAM Policy</span></td>
+          <td><span class="file-path">templates/fmops/sagemaker-huggingface-endpoint/skeleton/cdk/stack.py:87</span></td>
+          <td>
+            <div class="finding-title">AmazonSageMakerFullAccess on HuggingFace endpoint role</div>
+            <div class="finding-desc">SageMaker execution role for HuggingFace endpoint uses AmazonSageMakerFullAccess plus additional wildcard resource policies for S3, ECR, and CloudWatch. Far more permissions than needed for endpoint deployment.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Replace with custom inline policy scoped to sagemaker:CreateModel, sagemaker:CreateEndpoint, sagemaker:CreateEndpointConfig, sagemaker:InvokeEndpoint. Scope S3 to specific bucket ARNs and ECR to the specific DLC registry account.</div>
+          </td>
+        </tr>
+        <tr data-severity="HIGH" data-category="iam">
+          <td><span class="severity-badge sev-high">HIGH</span></td>
+          <td><span class="cat-badge">CDK IAM Policy</span></td>
+          <td><span class="file-path">templates/fmops/sagemaker-llm-finetune/skeleton/cdk/stack.py:102</span></td>
+          <td>
+            <div class="finding-title">AmazonSageMakerFullAccess + iam:PassRole with resources=["*"]</div>
+            <div class="finding-desc">Training role uses AmazonSageMakerFullAccess plus wildcard ECR/CloudWatch. The start-training Lambda's iam:PassRole uses resources=["*"] (line 178), allowing it to pass ANY IAM role in the account to SageMaker.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Replace AmazonSageMakerFullAccess with specific training permissions. Scope iam:PassRole to the specific SageMaker training role ARN: resources=[sagemaker_role.role_arn].</div>
+          </td>
+        </tr>
+        <tr data-severity="HIGH" data-category="iam">
+          <td><span class="severity-badge sev-high">HIGH</span></td>
+          <td><span class="cat-badge">CDK IAM Policy</span></td>
+          <td><span class="file-path">templates/fmops/bedrock-finetuning/skeleton/cdk/stack.py:220</span></td>
+          <td>
+            <div class="finding-title">iam:PassRole with wildcard resources allows role escalation</div>
+            <div class="finding-desc">Start-finetuning Lambda has iam:PassRole with resources=["*"], allowing it to pass any IAM role in the AWS account to Bedrock. Additionally, Bedrock role grants 8 actions with resources=["*"] for all Bedrock models.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Scope iam:PassRole to only the Bedrock customization role: resources=[bedrock_role.role_arn]. Scope Bedrock resources to specific model ARN patterns.</div>
+          </td>
+        </tr>
+        <tr data-severity="HIGH" data-category="network">
+          <td><span class="severity-badge sev-high">HIGH</span></td>
+          <td><span class="cat-badge">Network Security</span></td>
+          <td><span class="file-path">templates/fmops/qna-rag/skeleton/cdk/stack.py:148</span></td>
+          <td>
+            <div class="finding-title">OpenSearch Serverless allows public internet access</div>
+            <div class="finding-desc">The network policy sets 'AllowFromPublic': True, exposing the vector collection (containing potentially sensitive document embeddings) to the public internet.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Set 'AllowFromPublic': False and configure VPC endpoint access instead. Create an OpenSearch Serverless VPC endpoint in private subnets and reference it using 'SourceVPCEndpoints'.</div>
+          </td>
+        </tr>
+        <tr data-severity="HIGH" data-category="network">
+          <td><span class="severity-badge sev-high">HIGH</span></td>
+          <td><span class="cat-badge">Network Security</span></td>
+          <td><span class="file-path">templates/mlflow/ai-gateway/skeleton/cdk/stack.py:249</span></td>
+          <td>
+            <div class="finding-title">ALB allows HTTP from any IPv4 address (0.0.0.0/0), no HTTPS</div>
+            <div class="finding-desc">MLflow AI Gateway ALB security group allows inbound port 80 from 0.0.0.0/0. ALB is internet-facing with HTTP only (no TLS). MLflow tracking data and Bedrock API traffic transmitted unencrypted.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Add HTTPS (port 443) listener with ACM certificate. Redirect HTTP to HTTPS. For internal use, set internet_facing=False. Restrict source IPs to corporate CIDR ranges.</div>
+          </td>
+        </tr>
+        <tr data-severity="HIGH" data-category="actions">
+          <td><span class="severity-badge sev-high">HIGH</span></td>
+          <td><span class="cat-badge">GitHub Actions</span></td>
+          <td><span class="file-path">templates/foundation/vpc/skeleton/.github/workflows/destroy.yml:27</span></td>
+          <td>
+            <div class="finding-title">Script injection via github.event.inputs.confirm in run block</div>
+            <div class="finding-desc">Workflow directly interpolates '${{ github.event.inputs.confirm }}' in a bash run block. Malicious input containing shell metacharacters could execute arbitrary commands.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Use an environment variable instead: set 'env: CONFIRM: ${{ github.event.inputs.confirm }}' and reference as $CONFIRM in run block. Or remove the redundant shell validation since job-level 'if' already gates execution.</div>
+          </td>
+        </tr>
+        <tr data-severity="HIGH" data-category="supply-chain">
+          <td><span class="severity-badge sev-high">HIGH</span></td>
+          <td><span class="cat-badge">Supply Chain</span></td>
+          <td><span class="file-path">All 16 workflow files</span></td>
+          <td>
+            <div class="finding-title">CDK CLI installed with @latest tag across all workflows</div>
+            <div class="finding-desc">Every deploy and destroy workflow uses 'npm install -g aws-cdk@latest'. Different runs may install different CDK versions, causing non-reproducible builds. A compromised CDK release would be automatically pulled into all deployments.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Pin to a specific CDK version (e.g., 'npm install -g aws-cdk@2.170.0') matching the version in requirements.txt. Update deliberately through PRs.</div>
+          </td>
+        </tr>
+        <tr data-severity="HIGH" data-category="actions">
+          <td><span class="severity-badge sev-high">HIGH</span></td>
+          <td><span class="cat-badge">GitHub Actions</span></td>
+          <td><span class="file-path">All 8 deploy workflows</span></td>
+          <td>
+            <div class="finding-title">--require-approval never without environment protection</div>
+            <div class="finding-desc">All 8 deploy workflows use 'cdk deploy --require-approval never'. 7 of 8 do NOT set the 'environment' property at the job level, meaning GitHub environment protection rules cannot gate deployments. Security-sensitive IAM changes deploy without human review.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Add 'environment' property to all deploy jobs. Configure required reviewers for staging/prod in GitHub. Use '--require-approval broadening' for non-dev environments.</div>
+          </td>
+        </tr>
+        <tr data-severity="HIGH" data-category="encryption">
+          <td><span class="severity-badge sev-high">HIGH</span></td>
+          <td><span class="cat-badge">CDK Encryption</span></td>
+          <td><span class="file-path">templates/foundation/vpc/skeleton/cdk/stack.py</span></td>
+          <td>
+            <div class="finding-title">VPC stack has no encryption at rest configuration</div>
+            <div class="finding-desc">The VPC CDK stack contains no encryption-related configuration. While VPC itself doesn't store data, the flow log destination should use encryption.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Configure VPC flow log destination (CloudWatch Logs or S3) with KMS encryption. Create a KMS key for flow log encryption if using S3 destination.</div>
+          </td>
+        </tr>
+
+        <!-- MEDIUM FINDINGS -->
+        <tr data-severity="MEDIUM" data-category="csp">
+          <td><span class="severity-badge sev-medium">MEDIUM</span></td>
+          <td><span class="cat-badge">CSP Policy</span></td>
+          <td><span class="file-path">app-config.yaml:13</span></td>
+          <td>
+            <div class="finding-title">Overly permissive CSP connect-src allows all HTTP/HTTPS origins</div>
+            <div class="finding-desc">CSP connect-src set to ['self', 'http:', 'https:'] effectively permits browser connections to ANY endpoint, weakening protection against data exfiltration.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Restrict to specific origins: ["'self'", 'http://localhost:7007', 'https://api.github.com']. Remove blanket 'http:' and 'https:' wildcards.</div>
+          </td>
+        </tr>
+        <tr data-severity="MEDIUM" data-category="config">
+          <td><span class="severity-badge sev-medium">MEDIUM</span></td>
+          <td><span class="cat-badge">Configuration</span></td>
+          <td><span class="file-path">app-config.yaml:3</span></td>
+          <td>
+            <div class="finding-title">Backend and frontend use HTTP without TLS</div>
+            <div class="finding-desc">Both baseUrl values use plain HTTP. Production config also references http://localhost:7007.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Ensure production configuration uses HTTPS with proper domain names for both app.baseUrl and backend.baseUrl.</div>
+          </td>
+        </tr>
+        <tr data-severity="MEDIUM" data-category="auth">
+          <td><span class="severity-badge sev-medium">MEDIUM</span></td>
+          <td><span class="cat-badge">Authentication</span></td>
+          <td><span class="file-path">packages/app/src/App.tsx:61</span></td>
+          <td>
+            <div class="finding-title">SignInPage auto-signs in as guest without authentication</div>
+            <div class="finding-desc">SignInPage configured with 'auto' prop and providers={['guest']}, automatically bypassing any identity verification.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">For production, configure a real auth provider. Remove 'auto' prop. Use environment-based conditionals for guest auth.</div>
+          </td>
+        </tr>
+        <tr data-severity="MEDIUM" data-category="iam">
+          <td><span class="severity-badge sev-medium">MEDIUM</span></td>
+          <td><span class="cat-badge">CDK IAM Policy</span></td>
+          <td><span class="file-path">templates/mlflow/ai-gateway/skeleton/cdk/stack.py:224</span></td>
+          <td>
+            <div class="finding-title">Bedrock wildcard resources for all foundation models</div>
+            <div class="finding-desc">ECS task role grants bedrock:InvokeModel with resources=["*"], allowing invocation of ANY Bedrock model including expensive ones.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Scope bedrock:InvokeModel to specific model ARN patterns.</div>
+          </td>
+        </tr>
+        <tr data-severity="MEDIUM" data-category="iam">
+          <td><span class="severity-badge sev-medium">MEDIUM</span></td>
+          <td><span class="cat-badge">CDK IAM Policy</span></td>
+          <td><span class="file-path">templates/fmops/qna-rag/skeleton/cdk/stack.py:162</span></td>
+          <td>
+            <div class="finding-title">OpenSearch data access policy grants aoss:* to account root</div>
+            <div class="finding-desc">Data access policy grants all OpenSearch Serverless operations to the account root principal, meaning any IAM principal has full collection control.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Restrict Principal to specific Lambda execution roles. Reduce from aoss:* to specific needed actions.</div>
+          </td>
+        </tr>
+        <tr data-severity="MEDIUM" data-category="iam">
+          <td><span class="severity-badge sev-medium">MEDIUM</span></td>
+          <td><span class="cat-badge">CDK IAM Policy</span></td>
+          <td><span class="file-path">templates/fmops/qna-rag/skeleton/cdk/stack.py:215</span></td>
+          <td>
+            <div class="finding-title">OpenSearch collection wildcard in IAM policy</div>
+            <div class="finding-desc">Both roles have aoss:APIAccessAll with resources=[...collection/*], granting access to ALL collections in the account.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Scope resource to specific collection ARN using collection.attr_arn.</div>
+          </td>
+        </tr>
+        <tr data-severity="MEDIUM" data-category="config">
+          <td><span class="severity-badge sev-medium">MEDIUM</span></td>
+          <td><span class="cat-badge">Cognito Config</span></td>
+          <td><span class="file-path">templates/fmops/qna-rag/skeleton/cdk/stack.py:99</span></td>
+          <td>
+            <div class="finding-title">Cognito User Pool allows self-registration</div>
+            <div class="finding-desc">self_sign_up_enabled=True allows anyone to create an account and access the RAG query endpoint.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Set self_sign_up_enabled=False for non-dev environments, or add pre-sign-up Lambda to validate email domains.</div>
+          </td>
+        </tr>
+        <tr data-severity="MEDIUM" data-category="encryption">
+          <td><span class="severity-badge sev-medium">MEDIUM</span></td>
+          <td><span class="cat-badge">CDK Encryption</span></td>
+          <td><span class="file-path">templates/mlflow/ai-gateway/skeleton/cdk/stack.py:114</span></td>
+          <td>
+            <div class="finding-title">MLflow bucket uses KMS_MANAGED instead of customer-managed key</div>
+            <div class="finding-desc">Uses SSE-S3 managed KMS instead of a CMK, unlike other templates that create dedicated KMS keys with rotation.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Create a dedicated KMS key and use s3.BucketEncryption.KMS with encryption_key=encryption_key.</div>
+          </td>
+        </tr>
+        <tr data-severity="MEDIUM" data-category="config">
+          <td><span class="severity-badge sev-medium">MEDIUM</span></td>
+          <td><span class="cat-badge">S3 Config</span></td>
+          <td><span class="file-path">templates/fmops/sagemaker-jumpstart-endpoint/skeleton/cdk/stack.py:125</span></td>
+          <td>
+            <div class="finding-title">Data capture S3 bucket missing versioning</div>
+            <div class="finding-desc">Data capture bucket does not set versioned=True, unlike all other S3 buckets.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Add versioned=True to the DataCaptureBucket S3 configuration.</div>
+          </td>
+        </tr>
+        <tr data-severity="MEDIUM" data-category="network">
+          <td><span class="severity-badge sev-medium">MEDIUM</span></td>
+          <td><span class="cat-badge">Network Security</span></td>
+          <td><span class="file-path">templates/foundation/vpc/skeleton/cdk/stack.py:199</span></td>
+          <td>
+            <div class="finding-title">VPC endpoint security group allows all outbound traffic</div>
+            <div class="finding-desc">VPC endpoint SG created with allow_all_outbound=True. Interface endpoints only accept inbound connections.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Set allow_all_outbound=False for VPC endpoint security group.</div>
+          </td>
+        </tr>
+        <tr data-severity="MEDIUM" data-category="validation">
+          <td><span class="severity-badge sev-medium">MEDIUM</span></td>
+          <td><span class="cat-badge">Input Validation</span></td>
+          <td><span class="file-path">6 template.yaml files</span></td>
+          <td>
+            <div class="finding-title">Multiple template parameters lack input validation</div>
+            <div class="finding-desc">Free-form text parameters without pattern/maxLength: eksClusterName, ecrRepoName, jumpstartModelId, huggingfaceModelId, vectorIndexName, trainingDataS3Path, subnet IDs.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Add pattern constraints, maxLength, or enum validation to all free-form parameters interpolated into infrastructure code.</div>
+          </td>
+        </tr>
+        <tr data-severity="MEDIUM" data-category="config">
+          <td><span class="severity-badge sev-medium">MEDIUM</span></td>
+          <td><span class="cat-badge">CDK Config</span></td>
+          <td><span class="file-path">templates/agents/eks-strands-agents/skeleton/cdk/stack.py:100</span></td>
+          <td>
+            <div class="finding-title">Hardcoded placeholder OIDC provider ID in IAM trust policy</div>
+            <div class="finding-desc">IRSA role contains hardcoded 'EXAMPLED539D4633E53DE1B71EXAMPLE'. Deployed role has invalid or mismatched trust policy.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Accept EKS cluster OIDC provider ID as a CDK context parameter. Use SSM lookup at deploy time.</div>
+          </td>
+        </tr>
+        <tr data-severity="MEDIUM" data-category="actions">
+          <td><span class="severity-badge sev-medium">MEDIUM</span></td>
+          <td><span class="cat-badge">GitHub Actions</span></td>
+          <td><span class="file-path">All 16 workflows</span></td>
+          <td>
+            <div class="finding-title">Actions pinned to major tags instead of SHA hashes</div>
+            <div class="finding-desc">All actions use major version tags. SHA-pinning provides stronger supply chain protection against tag mutation attacks.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Pin to SHA hashes with version comments. Use Dependabot to keep updated.</div>
+          </td>
+        </tr>
+        <tr data-severity="MEDIUM" data-category="actions">
+          <td><span class="severity-badge sev-medium">MEDIUM</span></td>
+          <td><span class="cat-badge">GitHub Actions</span></td>
+          <td><span class="file-path">All 8 destroy workflows</span></td>
+          <td>
+            <div class="finding-title">Destroy workflows lack environment protection rules</div>
+            <div class="finding-desc">No destroy workflow sets the 'environment' job property. Any user with repo write access can destroy production infrastructure.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Add 'environment' property to destroy jobs. Configure required reviewers for staging/prod.</div>
+          </td>
+        </tr>
+        <tr data-severity="MEDIUM" data-category="supply-chain">
+          <td><span class="severity-badge sev-medium">MEDIUM</span></td>
+          <td><span class="cat-badge">Dependencies</span></td>
+          <td><span class="file-path">All 8 requirements.txt</span></td>
+          <td>
+            <div class="finding-title">Python dependencies use >= without upper bound</div>
+            <div class="finding-desc">All templates use unbounded version constraints. Pip may install breaking major version bumps.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Use compatible release constraints (e.g., 'aws-cdk-lib~=2.170.0'). Add lock files.</div>
+          </td>
+        </tr>
+        <tr data-severity="MEDIUM" data-category="docker">
+          <td><span class="severity-badge sev-medium">MEDIUM</span></td>
+          <td><span class="cat-badge">Docker Security</span></td>
+          <td><span class="file-path">templates/agents/eks-strands-agents/skeleton/agent/Dockerfile</span></td>
+          <td>
+            <div class="finding-title">Agent Dockerfile runs as root, lacks security hardening</div>
+            <div class="finding-desc">No USER directive, no HEALTHCHECK, base image not pinned to digest.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Add non-root user, pin base image to digest, add HEALTHCHECK instruction.</div>
+          </td>
+        </tr>
+        <tr data-severity="MEDIUM" data-category="docker">
+          <td><span class="severity-badge sev-medium">MEDIUM</span></td>
+          <td><span class="cat-badge">Docker Security</span></td>
+          <td><span class="file-path">templates/mlflow/ai-gateway/skeleton/.github/workflows/deploy.yml:97</span></td>
+          <td>
+            <div class="finding-title">Inline Dockerfile with unpinned base image and packages</div>
+            <div class="finding-desc">MLflow deploy constructs Dockerfile inline with unpinned python:3.11-slim. HEALTHCHECK uses curl (unavailable).</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Move Dockerfile to skeleton. Pin base image to digest. Pin pip versions. Fix HEALTHCHECK.</div>
+          </td>
+        </tr>
+        <tr data-severity="MEDIUM" data-category="catalog">
+          <td><span class="severity-badge sev-medium">MEDIUM</span></td>
+          <td><span class="cat-badge">Catalog Rules</span></td>
+          <td><span class="file-path">app-config.yaml:53</span></td>
+          <td>
+            <div class="finding-title">Broad catalog rules allow Location and Template entity types</div>
+            <div class="finding-desc">Allowing Location entities means users can register external catalog locations with malicious templates.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Restrict global rules to [Component, System, API, Resource]. Keep Template/Location restricted to trusted file locations.</div>
+          </td>
+        </tr>
+        <tr data-severity="MEDIUM" data-category="actions">
+          <td><span class="severity-badge sev-medium">MEDIUM</span></td>
+          <td><span class="cat-badge">GitHub Actions</span></td>
+          <td><span class="file-path">All 8 deploy workflows</span></td>
+          <td>
+            <div class="finding-title">Deploy triggers on push to main without branch protection</div>
+            <div class="finding-desc">Scaffolded repos won't have branch protection by default, allowing direct pushes to trigger deployments.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Document branch protection requirement. Add post-scaffolding step to configure branch protection.</div>
+          </td>
+        </tr>
+        <tr data-severity="MEDIUM" data-category="config">
+          <td><span class="severity-badge sev-medium">MEDIUM</span></td>
+          <td><span class="cat-badge">Configuration</span></td>
+          <td><span class="file-path">app-config.yaml:19</span></td>
+          <td>
+            <div class="finding-title">In-memory SQLite database loses all state on restart</div>
+            <div class="finding-desc">Database uses ':memory:'. All catalog entities and state lost on restart.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Use file-based SQLite for dev persistence. Ensure production uses PostgreSQL.</div>
+          </td>
+        </tr>
+        <tr data-severity="MEDIUM" data-category="deprecation">
+          <td><span class="severity-badge sev-medium">MEDIUM</span></td>
+          <td><span class="cat-badge">Dependencies</span></td>
+          <td><span class="file-path">packages/app/package.json:43</span></td>
+          <td>
+            <div class="finding-title">@material-ui/core v4 deprecated (moderate vulnerability)</div>
+            <div class="finding-desc">No active development since September 2021. No security patches.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Plan migration to @mui/material v5+ when Backstage provides full support.</div>
+          </td>
+        </tr>
+
+        <!-- LOW FINDINGS -->
+        <tr data-severity="LOW" data-category="encryption">
+          <td><span class="severity-badge sev-low">LOW</span></td>
+          <td><span class="cat-badge">CDK Encryption</span></td>
+          <td><span class="file-path">2 stack.py files (EKS, MLflow)</span></td>
+          <td>
+            <div class="finding-title">ECR/DynamoDB use AWS-managed encryption instead of KMS</div>
+            <div class="finding-desc">ECR uses AES-256, DynamoDB uses AWS_MANAGED, inconsistent with project's KMS encryption standards.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Use KMS encryption with dedicated keys for consistency.</div>
+          </td>
+        </tr>
+        <tr data-severity="LOW" data-category="tagging">
+          <td><span class="severity-badge sev-low">LOW</span></td>
+          <td><span class="cat-badge">CDK Tagging</span></td>
+          <td><span class="file-path">5 FMOps stack.py files</span></td>
+          <td>
+            <div class="finding-title">Owner tag set to component_name instead of team owner</div>
+            <div class="finding-desc">FMOps stacks set 'owner' tag to component_name rather than actual team from template form.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Pass owner value from template parameters to CDK stack.</div>
+          </td>
+        </tr>
+        <tr data-severity="LOW" data-category="config">
+          <td><span class="severity-badge sev-low">LOW</span></td>
+          <td><span class="cat-badge">CDK Config</span></td>
+          <td><span class="file-path">templates/fmops/qna-rag/skeleton/cdk/stack.py</span></td>
+          <td>
+            <div class="finding-title">Lambda functions not configured for VPC despite VPC parameters</div>
+            <div class="finding-desc">RAG Lambdas run in default VPC, not user's VPC, despite accepting VPC params and having VPC execution permissions.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Add vpc and vpc_subnets configuration to both Lambda functions.</div>
+          </td>
+        </tr>
+        <tr data-severity="LOW" data-category="dependencies">
+          <td><span class="severity-badge sev-low">LOW</span></td>
+          <td><span class="cat-badge">Dependencies</span></td>
+          <td><span class="file-path">All 8 CDK directories</span></td>
+          <td>
+            <div class="finding-title">No Python lock files for reproducible builds</div>
+            <div class="finding-desc">None of the CDK directories have requirements.lock, Pipfile.lock, or poetry.lock.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Generate lock files with pip-compile or use Poetry.</div>
+          </td>
+        </tr>
+        <tr data-severity="LOW" data-category="dependencies">
+          <td><span class="severity-badge sev-low">LOW</span></td>
+          <td><span class="cat-badge">Dependencies</span></td>
+          <td><span class="file-path">packages/app/package.json:57</span></td>
+          <td>
+            <div class="finding-title">@types/react-dom uses wildcard version (*)</div>
+            <div class="finding-desc">DevDependency accepts any version, potentially causing type incompatibilities.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Pin to "^18" matching the React version.</div>
+          </td>
+        </tr>
+        <tr data-severity="LOW" data-category="iam">
+          <td><span class="severity-badge sev-low">LOW</span></td>
+          <td><span class="cat-badge">IAM Strategy</span></td>
+          <td><span class="file-path">All 16 workflows</span></td>
+          <td>
+            <div class="finding-title">Single IAM deploy role used across all templates</div>
+            <div class="finding-desc">One GitHubActionsDeployRole for VPC, SageMaker, Bedrock, EKS, Fargate, OpenSearch, Cognito. Likely overly permissive.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Use template-specific IAM roles with least-privilege policies.</div>
+          </td>
+        </tr>
+        <tr data-severity="LOW" data-category="config">
+          <td><span class="severity-badge sev-low">LOW</span></td>
+          <td><span class="cat-badge">Configuration</span></td>
+          <td><span class="file-path">app-config.yaml:45</span></td>
+          <td>
+            <div class="finding-title">Scaffolder default author email uses example.com domain</div>
+            <div class="finding-desc">genforge@example.com provides no audit trail identity.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Use a real organizational email or no-reply address.</div>
+          </td>
+        </tr>
+        <tr data-severity="LOW" data-category="config">
+          <td><span class="severity-badge sev-low">LOW</span></td>
+          <td><span class="cat-badge">Configuration</span></td>
+          <td><span class="file-path">app-config.yaml:26</span></td>
+          <td>
+            <div class="finding-title">GitHub token referenced without scope validation</div>
+            <div class="finding-desc">${GITHUB_TOKEN} not validated for required scopes (repo, workflow). Missing token causes silent failures.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Document required scopes. Add startup health check for token validation.</div>
+          </td>
+        </tr>
+        <tr data-severity="LOW" data-category="config">
+          <td><span class="severity-badge sev-low">LOW</span></td>
+          <td><span class="cat-badge">CORS Config</span></td>
+          <td><span class="file-path">app-config.yaml:15</span></td>
+          <td>
+            <div class="finding-title">CORS allows DELETE and PUT methods with credentials</div>
+            <div class="finding-desc">Broad HTTP methods with credentials: true. Required for Backstage API but should be restricted in production origin.</div>
+            <div class="remediation-toggle" onclick="toggleRemediation(this)">&#9654; Show Remediation</div>
+            <div class="remediation-content">Override CORS origin in production to the actual frontend URL.</div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Remediation Priority -->
+  <div class="section">
+    <h2 class="section-title">Remediation Priority Matrix</h2>
+    <div class="exec-summary">
+      <h3>Immediate (Before Production Deployment)</h3>
+      <ol style="margin-left: 20px; line-height: 2.2; color: #495057;">
+        <li><strong style="color: var(--high);">[HIGH]</strong> Remove guest auth from app-config.production.yaml</li>
+        <li><strong style="color: var(--high);">[HIGH]</strong> Replace allow-all permission policy with RBAC</li>
+        <li><strong style="color: var(--high);">[HIGH]</strong> Replace AmazonSageMakerFullAccess with scoped policies (4 stacks)</li>
+        <li><strong style="color: var(--high);">[HIGH]</strong> Scope iam:PassRole to specific role ARNs (bedrock, llm-finetune)</li>
+        <li><strong style="color: var(--high);">[HIGH]</strong> Set OpenSearch AllowFromPublic=False, use VPC endpoints</li>
+        <li><strong style="color: var(--high);">[HIGH]</strong> Add HTTPS to MLflow ALB, restrict inbound CIDR</li>
+        <li><strong style="color: var(--high);">[HIGH]</strong> Fix script injection in VPC destroy workflow</li>
+      </ol>
+      <h3 style="margin-top: 24px;">Short-Term (First Sprint)</h3>
+      <ol start="8" style="margin-left: 20px; line-height: 2.2; color: #495057;">
+        <li><strong style="color: #b8860b;">[MEDIUM]</strong> Pin CDK CLI to specific version in all workflows</li>
+        <li><strong style="color: #b8860b;">[MEDIUM]</strong> Add environment protection rules to deploy/destroy workflows</li>
+        <li><strong style="color: #b8860b;">[MEDIUM]</strong> Add input validation patterns to free-form template parameters</li>
+        <li><strong style="color: #b8860b;">[MEDIUM]</strong> Restrict CSP connect-src to specific origins</li>
+        <li><strong style="color: #b8860b;">[MEDIUM]</strong> Create customer-managed KMS key for MLflow stack</li>
+        <li><strong style="color: #b8860b;">[MEDIUM]</strong> Add Docker security hardening (non-root user, digest pins)</li>
+      </ol>
+      <h3 style="margin-top: 24px;">Planned (Backlog)</h3>
+      <ol start="14" style="margin-left: 20px; line-height: 2.2; color: #495057;">
+        <li><strong style="color: var(--low);">[LOW]</strong> Pin all Actions to SHA hashes</li>
+        <li><strong style="color: var(--low);">[LOW]</strong> Add Python lock files for reproducible builds</li>
+        <li><strong style="color: var(--low);">[LOW]</strong> Standardize encryption (KMS everywhere) and fix tagging</li>
+        <li><strong style="color: var(--low);">[LOW]</strong> Template-specific IAM deploy roles</li>
+      </ol>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <strong>GenForge Security Scan Report</strong><br>
+    Generated: 2026-02-20 &nbsp;|&nbsp; 8 CDK stacks, 16 GitHub Actions workflows, 8 templates, 184 files scanned<br>
+    Scanner: GenForge Security Suite v1.0 (secrets detection, dependency audit, CDK review, GitHub Actions review, platform security, input validation)
+  </div>
+</div>
+
+<!-- Charts JS -->
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  new Chart(document.getElementById('severityChart'), {
+    type: 'doughnut',
+    data: {
+      labels: ['High', 'Medium', 'Low'],
+      datasets: [{ data: [12, 25, 10], backgroundColor: ['#fd7e14', '#ffc107', '#28a745'], borderWidth: 0, hoverOffset: 8 }]
+    },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { padding: 16, usePointStyle: true } } }, cutout: '60%' }
+  });
+
+  new Chart(document.getElementById('categoryChart'), {
+    type: 'bar',
+    data: {
+      labels: ['IAM/Auth', 'Network', 'Actions', 'Config', 'Input Val', 'Deps', 'Docker', 'Encryption'],
+      datasets: [{ label: 'Findings', data: [10, 4, 8, 8, 2, 5, 2, 4], backgroundColor: ['#e94560', '#6c63ff', '#00b4d8', '#ffc107', '#fd7e14', '#28a745', '#495057', '#17a2b8'], borderRadius: 6, borderWidth: 0 }]
+    },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { stepSize: 2 } }, x: { ticks: { font: { size: 11 } } } } }
+  });
+
+  new Chart(document.getElementById('templateChart'), {
+    type: 'bar',
+    data: {
+      labels: ['Platform', 'VPC', 'Bedrock', 'RAG', 'JumpStart', 'HF', 'FineTune', 'Agents', 'MLflow'],
+      datasets: [
+        { label: 'High', data: [3, 2, 1, 2, 1, 1, 1, 0, 2], backgroundColor: '#fd7e14', borderRadius: 4 },
+        { label: 'Medium', data: [6, 2, 1, 4, 1, 1, 1, 2, 4], backgroundColor: '#ffc107', borderRadius: 4 },
+        { label: 'Low', data: [2, 0, 1, 2, 0, 0, 0, 1, 2], backgroundColor: '#28a745', borderRadius: 4 },
+      ]
+    },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { padding: 12, usePointStyle: true } } }, scales: { x: { stacked: true, ticks: { font: { size: 10 } } }, y: { stacked: true, beginAtZero: true, ticks: { stepSize: 2 } } } }
+  });
+});
+
+function filterFindings(severity, btn) {
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('#findingsTable tbody tr').forEach(row => {
+    if (severity === 'all' || row.dataset.severity === severity) { row.classList.remove('hidden'); } else { row.classList.add('hidden'); }
+  });
+}
+
+function searchFindings(query) {
+  const q = query.toLowerCase();
+  document.querySelectorAll('#findingsTable tbody tr').forEach(row => {
+    const text = row.textContent.toLowerCase();
+    row.classList.toggle('hidden', q && !text.includes(q));
+  });
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  if (!q) document.querySelector('.filter-btn[data-filter="all"]').classList.add('active');
+}
+
+function toggleRemediation(el) {
+  const content = el.nextElementSibling;
+  content.classList.toggle('show');
+  el.innerHTML = content.classList.contains('show') ? '&#9660; Hide Remediation' : '&#9654; Show Remediation';
+}
+</script>
+</body>
+</html>

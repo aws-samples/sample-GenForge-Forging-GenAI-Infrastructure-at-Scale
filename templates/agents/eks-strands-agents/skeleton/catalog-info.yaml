@@ -1,0 +1,29 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: ${{ values.name }}
+  description: ${{ values.description | default("Strands AI Agent on EKS with Bedrock LLM backend") }}
+  annotations:
+    github.com/project-slug: ${{ values.repoUrl | parseRepoUrl | pick('owner') }}/${{ values.repoUrl | parseRepoUrl | pick('repo') }}
+    backstage.io/techdocs-ref: dir:.
+    github.com/ci-cd: 'enabled'
+  tags:
+    - aws
+    - genforge
+    - eks
+    - strands
+    - agents
+  links:
+    - url: https://${{ values.awsRegion }}.console.aws.amazon.com/eks/home?region=${{ values.awsRegion }}#/clusters/${{ values.eksClusterName }}
+      title: EKS Console
+      icon: cloud
+    - url: https://${{ values.awsRegion }}.console.aws.amazon.com/ecr/repositories?region=${{ values.awsRegion }}
+      title: ECR Console
+      icon: docker
+spec:
+  type: agents
+  lifecycle: production
+  owner: ${{ values.owner }}
+  system: genforge
+  providesApis: []
+  dependsOn: []

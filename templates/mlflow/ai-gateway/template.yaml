@@ -1,0 +1,245 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: genforge-mlflow-ai-gateway-template
+  title: MLflow AI Gateway
+  description: |
+    MLflow AI Gateway on ECS Fargate with experiment tracking and model serving:
+    - ECS Fargate service with Application Load Balancer
+    - ECR repository for MLflow container images
+    - S3 bucket for ML artifact storage with SSE-KMS encryption
+    - DynamoDB table for experiment tracking metadata
+    - Auto-scaling based on CPU utilization
+    - IAM roles with least-privilege Bedrock, S3, and DynamoDB access
+  tags:
+    - genforge
+    - generative-ai
+    - aws
+    - mlflow
+    - fargate
+    - gateway
+spec:
+  owner: platform-team
+  type: mlflow
+
+  parameters:
+    - title: Component Information
+      required:
+        - name
+        - owner
+      properties:
+        name:
+          title: Component Name
+          type: string
+          description: Unique name for your MLflow AI Gateway
+          ui:autofocus: true
+          pattern: '^[a-z0-9-]+$'
+          maxLength: 50
+        description:
+          title: Description
+          type: string
+          description: Brief description of this MLflow Gateway
+        owner:
+          title: Owner
+          type: string
+          description: Team that owns this component
+          ui:field: OwnerPicker
+          ui:options:
+            catalogFilter:
+              kind: Group
+
+    - title: AWS Configuration
+      required:
+        - awsRegion
+        - awsAccountId
+        - environment
+      properties:
+        awsRegion:
+          title: AWS Region
+          type: string
+          description: AWS region for deployment
+          default: us-east-1
+          enum:
+            - us-east-1
+            - us-west-2
+            - eu-west-1
+          enumNames:
+            - US East (N. Virginia)
+            - US West (Oregon)
+            - EU (Ireland)
+        awsAccountId:
+          title: AWS Account
+          type: string
+          description: Target AWS account for deployment
+          ui:field: EntityPicker
+          ui:options:
+            catalogFilter:
+              kind: Resource
+              spec.type: aws-account
+        environment:
+          title: Environment
+          type: string
+          description: Deployment environment
+          default: dev
+          enum:
+            - dev
+            - staging
+            - prod
+          enumNames:
+            - Development
+            - Staging
+            - Production
+
+    - title: Network Configuration
+      required:
+        - vpcId
+        - privateSubnetIds
+        - publicSubnetIds
+        - certificateArn
+      properties:
+        vpcId:
+          title: VPC ID
+          type: string
+          description: VPC to deploy the Fargate service into
+          pattern: '^vpc-[a-z0-9]+$'
+        privateSubnetIds:
+          title: Private Subnet IDs
+          type: string
+          description: Comma-separated list of private subnet IDs for ECS tasks
+        publicSubnetIds:
+          title: Public Subnet IDs
+          type: string
+          description: Comma-separated list of public subnet IDs for the ALB
+        certificateArn:
+          title: ACM Certificate ARN
+          type: string
+          description: |
+            ARN of an ACM certificate in the same region as the ALB. Used to
+            terminate TLS on the HTTPS listener (port 443). HTTP traffic on
+            port 80 is redirected to HTTPS.
+          pattern: '^arn:aws:acm:[a-z0-9-]+:\d{12}:certificate/[a-f0-9-]+$'
+
+    - title: MLflow Configuration
+      properties:
+        backendStoreType:
+          title: Backend Store Type
+          type: string
+          description: Storage backend for experiment tracking metadata
+          default: dynamodb
+          enum:
+            - dynamodb
+          enumNames:
+            - Amazon DynamoDB (serverless, pay-per-request)
+        artifactBucketName:
+          title: Artifact Bucket Name
+          type: string
+          description: S3 bucket name for ML artifacts (leave blank for auto-generated)
+
+    - title: Gateway Configuration
+      properties:
+        containerCpu:
+          title: Container CPU (units)
+          type: integer
+          description: CPU units for each Fargate task (256 = 0.25 vCPU)
+          default: 512
+          enum:
+            - 256
+            - 512
+            - 1024
+            - 2048
+          enumNames:
+            - '0.25 vCPU (256)'
+            - '0.5 vCPU (512)'
+            - '1 vCPU (1024)'
+            - '2 vCPU (2048)'
+        containerMemory:
+          title: Container Memory (MiB)
+          type: integer
+          description: Memory in MiB for each Fargate task
+          default: 1024
+          enum:
+            - 512
+            - 1024
+            - 2048
+            - 4096
+          enumNames:
+            - '512 MiB'
+            - '1024 MiB'
+            - '2048 MiB'
+            - '4096 MiB'
+        desiredCount:
+          title: Desired Task Count
+          type: integer
+          description: Number of Fargate tasks to run
+          default: 2
+          minimum: 1
+          maximum: 10
+        enableAutoScaling:
+          title: Enable Auto Scaling
+          type: boolean
+          description: Enable target-tracking auto scaling based on CPU utilization
+          default: true
+
+    - title: Repository Configuration
+      required:
+        - repoUrl
+      properties:
+        repoUrl:
+          title: Repository Location
+          type: string
+          ui:field: RepoUrlPicker
+          ui:options:
+            allowedHosts:
+              - github.com
+
+  steps:
+    - id: fetch-base
+      name: Fetch Base Template
+      action: fetch:template
+      input:
+        url: ./skeleton
+        values:
+          name: ${{ parameters.name }}
+          description: ${{ parameters.description }}
+          owner: ${{ parameters.owner }}
+          awsRegion: ${{ parameters.awsRegion }}
+          awsAccountId: ${{ parameters.awsAccountId | parseEntityRef | pick('name') }}
+          environment: ${{ parameters.environment }}
+          vpcId: ${{ parameters.vpcId }}
+          privateSubnetIds: ${{ parameters.privateSubnetIds }}
+          publicSubnetIds: ${{ parameters.publicSubnetIds }}
+          certificateArn: ${{ parameters.certificateArn }}
+          backendStoreType: ${{ parameters.backendStoreType }}
+          artifactBucketName: ${{ parameters.artifactBucketName }}
+          containerCpu: ${{ parameters.containerCpu }}
+          containerMemory: ${{ parameters.containerMemory }}
+          desiredCount: ${{ parameters.desiredCount }}
+          enableAutoScaling: ${{ parameters.enableAutoScaling }}
+          repoUrl: ${{ parameters.repoUrl }}
+
+    - id: publish
+      name: Publish to GitHub
+      action: publish:github
+      input:
+        description: 'GenForge - MLflow AI Gateway for ${{ parameters.name }}'
+        repoUrl: ${{ parameters.repoUrl }}
+        defaultBranch: main
+        repoVisibility: private
+
+    - id: register
+      name: Register Component
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
+        catalogInfoPath: '/catalog-info.yaml'
+
+  output:
+    links:
+      - title: Repository
+        url: ${{ steps['publish'].output.remoteUrl }}
+      - title: Open in Catalog
+        icon: catalog
+        entityRef: ${{ steps['register'].output.entityRef }}
+      - title: ECS Console
+        icon: cloud
+        url: https://${{ parameters.awsRegion }}.console.aws.amazon.com/ecs/v2/clusters?region=${{ parameters.awsRegion }}

@@ -1,0 +1,270 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: genforge-bedrock-finetuning-template
+  title: Bedrock Fine-Tuning
+  description: |
+    Fine-tune foundation models with Amazon Bedrock customization:
+    - S3 buckets for training data and model output
+    - IAM roles for Bedrock model customization
+    - Lambda functions for data validation, job start, and status checking
+    - Step Functions workflow for end-to-end orchestration
+    - SNS notifications for job status updates
+    - CloudWatch log groups for monitoring
+  tags:
+    - genforge
+    - generative-ai
+    - aws
+    - bedrock
+    - fine-tuning
+    - fmops
+spec:
+  owner: platform-team
+  type: fmops
+
+  parameters:
+    - title: Component Information
+      required:
+        - name
+        - owner
+      properties:
+        name:
+          title: Component Name
+          type: string
+          description: Unique name for your fine-tuning pipeline
+          ui:autofocus: true
+          pattern: '^[a-z0-9-]+$'
+          maxLength: 50
+        description:
+          title: Description
+          type: string
+          description: Brief description of this fine-tuning pipeline
+        owner:
+          title: Owner
+          type: string
+          description: Team that owns this component
+          ui:field: OwnerPicker
+          ui:options:
+            catalogFilter:
+              kind: Group
+
+    - title: AWS Configuration
+      required:
+        - awsRegion
+        - awsAccountId
+        - environment
+      properties:
+        awsRegion:
+          title: AWS Region
+          type: string
+          description: AWS region for deployment (must support Bedrock fine-tuning)
+          default: us-east-1
+          enum:
+            - us-east-1
+            - us-west-2
+            - eu-west-1
+            - ap-southeast-1
+          enumNames:
+            - US East (N. Virginia)
+            - US West (Oregon)
+            - EU (Ireland)
+            - Asia Pacific (Singapore)
+        awsAccountId:
+          title: AWS Account
+          type: string
+          description: Target AWS account for deployment
+          ui:field: EntityPicker
+          ui:options:
+            catalogFilter:
+              kind: Resource
+              spec.type: aws-account
+        environment:
+          title: Environment
+          type: string
+          description: Deployment environment
+          default: dev
+          enum:
+            - dev
+            - staging
+            - prod
+          enumNames:
+            - Development
+            - Staging
+            - Production
+
+    - title: Model Configuration
+      required:
+        - baseModelId
+      properties:
+        baseModelId:
+          title: Base Model
+          type: string
+          description: Bedrock foundation model to fine-tune
+          default: amazon.nova-lite-v1:0:300k
+          enum:
+            - amazon.nova-lite-v1:0:300k
+            - amazon.nova-micro-v1:0:128k
+            - amazon.nova-pro-v1:0:300k
+            - amazon.nova-2-lite-v1:0:256k
+          enumNames:
+            - Amazon Nova Lite (300k context)
+            - Amazon Nova Micro (128k context)
+            - Amazon Nova Pro (300k context, supports distillation)
+            - Amazon Nova 2 Lite (256k context)
+        customizationType:
+          title: Customization Type
+          type: string
+          description: Type of model customization
+          default: FINE_TUNING
+          enum:
+            - FINE_TUNING
+            - DISTILLATION
+          enumNames:
+            - Fine-Tuning (task-specific)
+            - Distillation (Nova Pro, Lite, Micro only)
+
+    - title: Training Configuration
+      properties:
+        trainingEpochs:
+          title: Training Epochs
+          type: integer
+          description: Number of training epochs (1-10)
+          default: 3
+          minimum: 1
+          maximum: 10
+        batchSize:
+          title: Batch Size
+          type: integer
+          description: Training batch size (1-64)
+          default: 8
+          minimum: 1
+          maximum: 64
+        learningRate:
+          title: Learning Rate
+          type: number
+          description: Learning rate for training
+          default: 0.00001
+        warmupRatio:
+          title: Warmup Ratio
+          type: number
+          description: Ratio of warmup steps (0-1)
+          default: 0.1
+          minimum: 0
+          maximum: 1
+
+    - title: Data Configuration
+      properties:
+        enableDataValidation:
+          title: Enable Data Validation
+          type: boolean
+          description: Validate training data format before starting job
+          default: true
+        maxTrainingDataSizeMb:
+          title: Max Training Data Size (MB)
+          type: integer
+          description: Maximum allowed training data size in megabytes
+          default: 100
+          minimum: 1
+          maximum: 10000
+        validationDataRatio:
+          title: Validation Data Ratio
+          type: number
+          description: Fraction of data reserved for validation (0-0.5)
+          default: 0.2
+          minimum: 0
+          maximum: 0.5
+
+    - title: Output Configuration
+      properties:
+        enableProvisionedThroughput:
+          title: Enable Provisioned Throughput
+          type: boolean
+          description: Automatically provision the fine-tuned model for inference
+          default: false
+        provisionedModelUnits:
+          title: Provisioned Model Units
+          type: integer
+          description: Number of model units to provision (if enabled)
+          default: 1
+          minimum: 1
+          maximum: 10
+
+    - title: Notifications
+      properties:
+        enableNotifications:
+          title: Enable Notifications
+          type: boolean
+          description: Send SNS notifications for job status changes
+          default: true
+        notificationEmail:
+          title: Notification Email
+          type: string
+          description: Email address for notifications
+          pattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+
+    - title: Repository Configuration
+      required:
+        - repoUrl
+      properties:
+        repoUrl:
+          title: Repository Location
+          type: string
+          ui:field: RepoUrlPicker
+          ui:options:
+            allowedHosts:
+              - github.com
+
+  steps:
+    - id: fetch-base
+      name: Fetch Base Template
+      action: fetch:template
+      input:
+        url: ./skeleton
+        values:
+          name: ${{ parameters.name }}
+          description: ${{ parameters.description }}
+          owner: ${{ parameters.owner }}
+          awsRegion: ${{ parameters.awsRegion }}
+          awsAccountId: ${{ parameters.awsAccountId | parseEntityRef | pick('name') }}
+          environment: ${{ parameters.environment }}
+          baseModelId: ${{ parameters.baseModelId }}
+          customizationType: ${{ parameters.customizationType }}
+          trainingEpochs: ${{ parameters.trainingEpochs }}
+          batchSize: ${{ parameters.batchSize }}
+          learningRate: ${{ parameters.learningRate }}
+          warmupRatio: ${{ parameters.warmupRatio }}
+          enableDataValidation: ${{ parameters.enableDataValidation }}
+          maxTrainingDataSizeMb: ${{ parameters.maxTrainingDataSizeMb }}
+          validationDataRatio: ${{ parameters.validationDataRatio }}
+          enableProvisionedThroughput: ${{ parameters.enableProvisionedThroughput }}
+          provisionedModelUnits: ${{ parameters.provisionedModelUnits }}
+          enableNotifications: ${{ parameters.enableNotifications }}
+          notificationEmail: ${{ parameters.notificationEmail }}
+          repoUrl: ${{ parameters.repoUrl }}
+
+    - id: publish
+      name: Publish to GitHub
+      action: publish:github
+      input:
+        description: 'GenForge - Bedrock Fine-Tuning for ${{ parameters.name }}'
+        repoUrl: ${{ parameters.repoUrl }}
+        defaultBranch: main
+        repoVisibility: private
+
+    - id: register
+      name: Register Component
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
+        catalogInfoPath: '/catalog-info.yaml'
+
+  output:
+    links:
+      - title: Repository
+        url: ${{ steps['publish'].output.remoteUrl }}
+      - title: Open in Catalog
+        icon: catalog
+        entityRef: ${{ steps['register'].output.entityRef }}
+      - title: Bedrock Console
+        icon: cloud
+        url: https://${{ parameters.awsRegion }}.console.aws.amazon.com/bedrock/home?region=${{ parameters.awsRegion }}#/custom-models

@@ -1,0 +1,150 @@
+name: Deploy MLflow AI Gateway Infrastructure
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+        default: dev
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+env:
+  AWS_REGION: ${{ values.awsRegion }}
+  ENVIRONMENT: {% raw %}${{ github.event.inputs.environment || '{% endraw %}${{ values.environment }}{% raw %}' }}{% endraw %}
+
+jobs:
+  build-and-deploy:
+    name: Build Image & Deploy Infrastructure
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ values.awsAccountId }}:role/GitHubActionsDeployRole
+          role-session-name: GitHubActionsMlflowDeploy
+          aws-region: {% raw %}${{ env.AWS_REGION }}{% endraw %}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk@2.170.0
+
+      - name: Install Python Dependencies
+        working-directory: ./cdk
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: CDK Synth
+        working-directory: ./cdk
+        run: cdk synth
+
+      - name: CDK Diff
+        working-directory: ./cdk
+        run: cdk diff
+        continue-on-error: true
+
+      - name: Pre-Deploy - Create ECR Repository Only
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: |
+          # Create ECR repository if it doesn't exist (idempotent)
+          ECR_REPO_NAME="${{ values.name }}-{% raw %}${{ env.ENVIRONMENT }}{% endraw %}-mlflow"
+          aws ecr describe-repositories --repository-names "${ECR_REPO_NAME}" --region {% raw %}${{ env.AWS_REGION }}{% endraw %} 2>/dev/null || \
+          aws ecr create-repository \
+            --repository-name "${ECR_REPO_NAME}" \
+            --image-scanning-configuration scanOnPush=true \
+            --encryption-configuration encryptionType=AES256 \
+            --region {% raw %}${{ env.AWS_REGION }}{% endraw %}
+          
+          ECR_URI=$(aws ecr describe-repositories --repository-names "${ECR_REPO_NAME}" --region {% raw %}${{ env.AWS_REGION }}{% endraw %} --query 'repositories[0].repositoryUri' --output text)
+          echo "ecr_uri=${ECR_URI}" >> "$GITHUB_ENV"
+
+      - name: Login to Amazon ECR
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and Push MLflow Docker Image
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: |
+          ECR_URI="{% raw %}${{ env.ecr_uri }}{% endraw %}"
+          IMAGE_TAG="{% raw %}${{ github.sha }}{% endraw %}"
+
+          # Build from official MLflow image with gateway dependencies
+          cat > /tmp/Dockerfile.mlflow <<'DOCKERFILE'
+          FROM python:3.11-slim
+
+          RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
+          RUN pip install --no-cache-dir \
+              mlflow[gateway]>=2.12.0 \
+              boto3>=1.34.0 \
+              gunicorn>=21.2.0
+
+          EXPOSE 5000
+
+          HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+              CMD curl -f http://localhost:5000/health || exit 1
+
+          CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "--timeout", "120", "mlflow.server:app"]
+          DOCKERFILE
+
+          docker build -t "${ECR_URI}:${IMAGE_TAG}" -t "${ECR_URI}:latest" -f /tmp/Dockerfile.mlflow .
+          docker push "${ECR_URI}:${IMAGE_TAG}"
+          docker push "${ECR_URI}:latest"
+          
+          echo "✅ MLflow image pushed to ECR: ${ECR_URI}:latest"
+
+      - name: CDK Deploy
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        working-directory: ./cdk
+        run: cdk deploy --require-approval never --outputs-file cdk-outputs.json
+
+      - name: Upload CDK Outputs
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cdk-outputs
+          path: ./cdk/cdk-outputs.json
+          retention-days: 30
+
+      - name: Comment PR with Diff
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { execSync } = require('child_process');
+            const diff = execSync('cd cdk && cdk diff 2>&1 || true', { encoding: 'utf-8' });
+            const truncatedDiff = diff.length > 60000 ? diff.substring(0, 60000) + '\n... (truncated)' : diff;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## CDK Diff Output - MLflow AI Gateway\n\n\`\`\`\n${truncatedDiff}\n\`\`\``
+            });

@@ -1,0 +1,226 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: genforge-sagemaker-huggingface-endpoint-template
+  title: SageMaker HuggingFace Endpoint
+  description: |
+    Deploy HuggingFace models on SageMaker with Text Generation Inference (TGI) container:
+    - Direct deployment from HuggingFace Hub model IDs
+    - TGI container with configurable version and quantization
+    - Application Auto Scaling (target tracking on InvocationsPerInstance)
+    - CloudWatch alarms for latency and error monitoring
+    - IAM roles with least-privilege permissions
+  tags:
+    - genforge
+    - generative-ai
+    - aws
+    - sagemaker
+    - huggingface
+    - endpoint
+    - fmops
+spec:
+  owner: platform-team
+  type: fmops
+
+  parameters:
+    - title: Component Information
+      required:
+        - name
+        - owner
+      properties:
+        name:
+          title: Component Name
+          type: string
+          description: Unique name for your HuggingFace endpoint
+          ui:autofocus: true
+          pattern: '^[a-z0-9-]+$'
+          maxLength: 50
+        description:
+          title: Description
+          type: string
+          description: Brief description of this endpoint
+        owner:
+          title: Owner
+          type: string
+          description: Team that owns this component
+          ui:field: OwnerPicker
+          ui:options:
+            catalogFilter:
+              kind: Group
+
+    - title: AWS Configuration
+      required:
+        - awsRegion
+        - awsAccountId
+        - environment
+      properties:
+        awsRegion:
+          title: AWS Region
+          type: string
+          description: AWS region for deployment
+          default: us-east-1
+          enum:
+            - us-east-1
+            - us-west-2
+            - eu-west-1
+          enumNames:
+            - US East (N. Virginia)
+            - US West (Oregon)
+            - EU (Ireland)
+        awsAccountId:
+          title: AWS Account
+          type: string
+          description: Target AWS account for deployment
+          ui:field: EntityPicker
+          ui:options:
+            catalogFilter:
+              kind: Resource
+              spec.type: aws-account
+        environment:
+          title: Environment
+          type: string
+          description: Deployment environment
+          default: dev
+          enum:
+            - dev
+            - staging
+            - prod
+          enumNames:
+            - Development
+            - Staging
+            - Production
+
+    - title: Model Configuration
+      required:
+        - huggingfaceModelId
+        - instanceType
+      properties:
+        huggingfaceModelId:
+          title: HuggingFace Model ID
+          type: string
+          description: Model ID from HuggingFace Hub (e.g., mistralai/Mistral-7B-Instruct-v0.2)
+          default: mistralai/Mistral-7B-Instruct-v0.2
+        taskType:
+          title: Task Type
+          type: string
+          description: Model task type
+          default: text-generation
+          enum:
+            - text-generation
+            - text-classification
+            - question-answering
+            - summarization
+          enumNames:
+            - Text Generation
+            - Text Classification
+            - Question Answering
+            - Summarization
+        instanceType:
+          title: Instance Type
+          type: string
+          description: Inference instance type (GPU recommended for LLMs)
+          default: ml.g5.xlarge
+          enum:
+            - ml.g5.xlarge
+            - ml.g5.2xlarge
+            - ml.g5.4xlarge
+            - ml.g5.12xlarge
+            - ml.g5.48xlarge
+            - ml.p4d.24xlarge
+          enumNames:
+            - ml.g5.xlarge (1x A10G GPU, 24GB)
+            - ml.g5.2xlarge (1x A10G GPU, 24GB)
+            - ml.g5.4xlarge (1x A10G GPU, 24GB)
+            - ml.g5.12xlarge (4x A10G GPU, 96GB)
+            - ml.g5.48xlarge (8x A10G GPU, 192GB)
+            - ml.p4d.24xlarge (8x A100 GPU, 320GB)
+
+    - title: Container Configuration
+      properties:
+        tgiVersion:
+          title: TGI Version
+          type: string
+          description: Text Generation Inference container version
+          default: '2.3.1'
+          enum:
+            - '2.3.1'
+            - '2.2.0'
+            - '2.0.1'
+          enumNames:
+            - 2.3.1 (Latest)
+            - 2.2.0
+            - 2.0.1
+        quantization:
+          title: Quantization
+          type: string
+          description: Model quantization method (reduces memory, may impact accuracy)
+          default: none
+          enum:
+            - none
+            - bitsandbytes-nf4
+            - bitsandbytes-fp4
+            - gptq
+          enumNames:
+            - None (Full Precision)
+            - BitsAndBytes NF4 (4-bit)
+            - BitsAndBytes FP4 (4-bit)
+            - GPTQ (4-bit)
+
+    - title: Repository Configuration
+      required:
+        - repoUrl
+      properties:
+        repoUrl:
+          title: Repository Location
+          type: string
+          ui:field: RepoUrlPicker
+          ui:options:
+            allowedHosts:
+              - github.com
+
+  steps:
+    - id: fetch-base
+      name: Fetch Base Template
+      action: fetch:template
+      input:
+        url: ./skeleton
+        values:
+          name: ${{ parameters.name }}
+          description: ${{ parameters.description }}
+          owner: ${{ parameters.owner }}
+          awsRegion: ${{ parameters.awsRegion }}
+          awsAccountId: ${{ parameters.awsAccountId | parseEntityRef | pick('name') }}
+          environment: ${{ parameters.environment }}
+          huggingfaceModelId: ${{ parameters.huggingfaceModelId }}
+          taskType: ${{ parameters.taskType }}
+          instanceType: ${{ parameters.instanceType }}
+          tgiVersion: ${{ parameters.tgiVersion }}
+          quantization: ${{ parameters.quantization }}
+          repoUrl: ${{ parameters.repoUrl }}
+
+    - id: publish
+      name: Publish to GitHub
+      action: publish:github
+      input:
+        description: 'GenForge - SageMaker HuggingFace Endpoint for ${{ parameters.name }}'
+        repoUrl: ${{ parameters.repoUrl }}
+        defaultBranch: main
+        repoVisibility: private
+
+    - id: register
+      name: Register Component
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
+        catalogInfoPath: '/catalog-info.yaml'
+
+  output:
+    links:
+      - title: Repository
+        url: ${{ steps['publish'].output.remoteUrl }}
+      - title: Open in Catalog
+        icon: catalog
+        entityRef: ${{ steps['register'].output.entityRef }}
+      - title: SageMaker Console
+        icon: cloud
+        url: https://${{ parameters.awsRegion }}.console.aws.amazon.com/sagemaker/home?region=${{ parameters.awsRegion }}#/endpoints

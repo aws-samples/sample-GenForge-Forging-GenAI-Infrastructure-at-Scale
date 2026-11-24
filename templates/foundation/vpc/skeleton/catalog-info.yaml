@@ -1,0 +1,24 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: ${{ values.name }}
+  description: ${{ values.description | default("VPC Foundation Infrastructure") }}
+  tags:
+    - aws
+    - genforge
+    - vpc
+    - foundation
+    - networking
+  annotations:
+    github.com/project-slug: ${{ values.destination.owner + "/" + values.destination.repo }}
+    backstage.io/techdocs-ref: dir:.
+    github.com/ci-cd: 'enabled'
+  links:
+    - url: https://${{ values.awsRegion }}.console.aws.amazon.com/vpc/home?region=${{ values.awsRegion }}
+      title: AWS VPC Console
+      icon: cloud
+spec:
+  type: foundation
+  lifecycle: production
+  owner: ${{ values.owner }}
+  system: genforge

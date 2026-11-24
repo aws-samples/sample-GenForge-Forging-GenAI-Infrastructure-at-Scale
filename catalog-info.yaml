@@ -1,0 +1,12 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: genforge
+  description: GenForge - Internal Developer Platform for self-service GenAI infrastructure provisioning
+  annotations:
+    backstage.io/techdocs-ref: dir:.
+spec:
+  type: website
+  owner: platform-team
+  lifecycle: production
+  system: genforge

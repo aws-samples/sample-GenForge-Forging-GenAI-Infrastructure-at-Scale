@@ -1,0 +1,49 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: platform-team
+  title: Platform Team
+  description: Platform engineering team managing GenForge
+spec:
+  type: team
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: data-science-team
+  title: Data Science Team
+  description: Data scientists using GenForge for ML/AI workloads
+spec:
+  type: team
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: data-engineering-team
+  title: Data Engineering Team
+  description: Data engineers building data pipelines and infrastructure
+spec:
+  type: team
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: devops-team
+  title: DevOps Team
+  description: DevOps engineers managing deployment and operations
+spec:
+  type: team
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: User
+metadata:
+  name: guest
+  title: Guest User
+spec:
+  memberOf:
+    - data-science-team

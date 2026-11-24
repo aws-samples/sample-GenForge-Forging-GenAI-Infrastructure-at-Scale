@@ -1,0 +1,30 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: ${{ values.name }}
+  description: ${{ values.description | default("SageMaker HuggingFace Model Endpoint with TGI") }}
+  annotations:
+    github.com/project-slug: ${{ values.repoUrl | parseRepoUrl | pick('owner') }}/${{ values.repoUrl | parseRepoUrl | pick('repo') }}
+    backstage.io/techdocs-ref: dir:.
+    github.com/ci-cd: 'enabled'
+  tags:
+    - aws
+    - genforge
+    - sagemaker
+    - huggingface
+    - endpoint
+    - fmops
+  links:
+    - url: https://${{ values.awsRegion }}.console.aws.amazon.com/sagemaker/home?region=${{ values.awsRegion }}#/endpoints
+      title: SageMaker Endpoints Console
+      icon: cloud
+    - url: https://huggingface.co/${{ values.huggingfaceModelId }}
+      title: HuggingFace Model Page
+      icon: dashboard
+spec:
+  type: fmops
+  lifecycle: production
+  owner: ${{ values.owner }}
+  system: genforge
+  providesApis: []
+  dependsOn: []

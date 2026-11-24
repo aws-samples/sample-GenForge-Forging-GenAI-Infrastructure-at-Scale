@@ -1,0 +1,118 @@
+app:
+  title: GenForge
+  baseUrl: http://localhost:3000
+
+organization:
+  name: GenForge
+
+backend:
+  baseUrl: http://localhost:7007
+  listen:
+    port: 7007
+  csp:
+    connect-src: ["'self'", 'http:', 'https:']
+  cors:
+    origin: http://localhost:3000
+    methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
+    credentials: true
+  database:
+    client: better-sqlite3
+    connection:
+      directory: .backstage-db
+  workingDirectory: /tmp/genforge-scaffolder
+
+integrations:
+  github:
+    - host: github.com
+      token: ${GITHUB_TOKEN}
+
+proxy:
+  endpoints:
+    '/github/api':
+      target: https://api.github.com
+      headers:
+        Authorization: token ${GITHUB_TOKEN}
+        Accept: application/vnd.github.v3+json
+
+techdocs:
+  builder: 'local'
+  generator:
+    runIn: 'local'
+  publisher:
+    type: 'local'
+
+auth:
+  providers:
+    guest: {}
+    github:
+      development:
+        clientId: ${GITHUB_CLIENT_ID}
+        clientSecret: ${GITHUB_CLIENT_SECRET}
+
+scaffolder:
+  defaultAuthor:
+    name: GenForge
+    email: genforge@example.com
+  defaultCommitMessage: 'Initial scaffolding by GenForge'
+
+catalog:
+  import:
+    entityFilename: catalog-info.yaml
+    pullRequestBranchName: backstage-integration
+  rules:
+    - allow: [Component, System, API, Resource, Location, Template, Group, User]
+  locations:
+    # System and organization
+    - type: file
+      target: ../../catalog/genforge-system.yaml
+    - type: file
+      target: ../../catalog/org.yaml
+      rules:
+        - allow: [User, Group]
+    - type: file
+      target: ../../catalog/aws-accounts.yaml
+      rules:
+        - allow: [Resource]
+
+    # Foundation templates
+    - type: file
+      target: ../../templates/foundation/vpc/template.yaml
+      rules:
+        - allow: [Template]
+
+    # FMOps templates
+    - type: file
+      target: ../../templates/fmops/bedrock-finetuning/template.yaml
+      rules:
+        - allow: [Template]
+    - type: file
+      target: ../../templates/fmops/qna-rag/template.yaml
+      rules:
+        - allow: [Template]
+    - type: file
+      target: ../../templates/fmops/sagemaker-jumpstart-endpoint/template.yaml
+      rules:
+        - allow: [Template]
+    - type: file
+      target: ../../templates/fmops/sagemaker-huggingface-endpoint/template.yaml
+      rules:
+        - allow: [Template]
+    - type: file
+      target: ../../templates/fmops/sagemaker-llm-finetune/template.yaml
+      rules:
+        - allow: [Template]
+
+    # Agents templates
+    - type: file
+      target: ../../templates/agents/eks-strands-agents/template.yaml
+      rules:
+        - allow: [Template]
+
+    # MLflow templates
+    - type: file
+      target: ../../templates/mlflow/ai-gateway/template.yaml
+      rules:
+        - allow: [Template]
+
+permission:
+  enabled: true

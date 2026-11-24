@@ -1,0 +1,100 @@
+name: Deploy VPC Infrastructure
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: '${{ values.environment }}'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+env:
+  AWS_REGION: ${{ values.awsRegion }}
+  ENVIRONMENT: {% raw %}${{ github.event.inputs.environment || '{% endraw %}${{ values.environment }}{% raw %}' }}{% endraw %}
+
+jobs:
+  deploy:
+    name: Deploy CDK Stack
+    runs-on: ubuntu-latest
+    environment: {% raw %}${{ github.event.inputs.environment || '{% endraw %}${{ values.environment }}{% raw %}' }}{% endraw %}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ values.accountId }}:role/GitHubActionsDeployRole
+          role-session-name: GitHubActionsSession
+          aws-region: {% raw %}${{ env.AWS_REGION }}{% endraw %}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk@2.170.0
+
+      - name: Install Python dependencies
+        working-directory: ./cdk
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: CDK Synth
+        working-directory: ./cdk
+        run: cdk synth
+
+      - name: CDK Diff
+        working-directory: ./cdk
+        run: cdk diff
+        continue-on-error: true
+
+      - name: CDK Deploy
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        working-directory: ./cdk
+        run: cdk deploy --require-approval never --all --outputs-file cdk-outputs.json
+
+      - name: Upload CDK Outputs
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cdk-outputs
+          path: ./cdk/cdk-outputs.json
+
+      - name: Comment PR with Diff
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { execSync } = require('child_process');
+            const diff = execSync('cd cdk && cdk diff 2>&1 || true', { encoding: 'utf-8' });
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## CDK Diff Output\n\`\`\`\n${diff}\n\`\`\``
+            });

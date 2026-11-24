@@ -1,0 +1,121 @@
+name: Deploy Strands Agent Infrastructure
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+        default: dev
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+env:
+  AWS_REGION: ${{ values.awsRegion }}
+  ENVIRONMENT: {% raw %}${{ github.event.inputs.environment || '{% endraw %}${{ values.environment }}{% raw %}' }}{% endraw %}
+
+jobs:
+  build-and-deploy:
+    name: Build Image & Deploy Infrastructure
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ values.awsAccountId }}:role/GitHubActionsDeployRole
+          role-session-name: GitHubActionsStrandsAgentDeploy
+          aws-region: {% raw %}${{ env.AWS_REGION }}{% endraw %}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk@2.170.0
+
+      - name: Install Python Dependencies
+        working-directory: ./cdk
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: CDK Synth
+        working-directory: ./cdk
+        run: cdk synth
+
+      - name: CDK Diff
+        working-directory: ./cdk
+        run: cdk diff
+        continue-on-error: true
+
+      - name: CDK Deploy
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        working-directory: ./cdk
+        run: cdk deploy --require-approval never --outputs-file cdk-outputs.json
+
+      - name: Extract ECR Repository URI
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        id: ecr-uri
+        run: |
+          ECR_URI=$(jq -r '.[].EcrRepositoryUri // empty' ./cdk/cdk-outputs.json)
+          echo "ecr_uri=${ECR_URI}" >> {% raw %}"$GITHUB_OUTPUT"{% endraw %}
+
+      - name: Login to Amazon ECR
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and Push Agent Docker Image
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        working-directory: ./agent
+        run: |
+          ECR_URI="{% raw %}${{ steps.ecr-uri.outputs.ecr_uri }}{% endraw %}"
+          IMAGE_TAG="{% raw %}${{ github.sha }}{% endraw %}"
+          docker build -t "${ECR_URI}:${IMAGE_TAG}" -t "${ECR_URI}:latest" .
+          docker push "${ECR_URI}:${IMAGE_TAG}"
+          docker push "${ECR_URI}:latest"
+
+      - name: Upload CDK Outputs
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cdk-outputs
+          path: ./cdk/cdk-outputs.json
+          retention-days: 30
+
+      - name: Comment PR with Diff
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { execSync } = require('child_process');
+            const diff = execSync('cd cdk && cdk diff 2>&1 || true', { encoding: 'utf-8' });
+            const truncatedDiff = diff.length > 60000 ? diff.substring(0, 60000) + '\n... (truncated)' : diff;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## CDK Diff Output - Strands Agent\n\n\`\`\`\n${truncatedDiff}\n\`\`\``
+            });
